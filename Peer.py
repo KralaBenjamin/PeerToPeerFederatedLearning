@@ -2,6 +2,7 @@ import sys
 import asyncio
 import pickle
 import logging
+import itertools
 
 logging.basicConfig(level=logging.INFO)
 
@@ -14,7 +15,7 @@ class PeerNode:
         self.peers = {}
         self.connections = {}
         self.classes = [0, 10]
-        self.connected_classes = []
+        self.connected_classes = {key: 0 for key in range(11)}
         self.connections_refused = [self.host + ":" + self.port]
         self.weights = None
 
@@ -73,7 +74,7 @@ class PeerNode:
 
             if initial_package["ACTION"] == "SEEK PEERS":
                 load = self.peers
-                load[self.host+":"+self.port] = self.classes
+                load[self.host + ":" + self.port] = self.classes
                 await self.send_package(writer, "PEERS SEND", load)
                 logging.info(f"Send peer list to {peer_host}:{peer_port}")
                 writer.close()
@@ -85,6 +86,8 @@ class PeerNode:
 
                 self.peers[initial_package["ADDRESS"][0] + ":" + initial_package["ADDRESS"][1]] = \
                     initial_package["ADDRESS"][2]
+                for c in initial_package["ADDRESS"][3]:
+                    self.connected_classes[c] += 1
 
                 try:
                     while True:
@@ -97,7 +100,9 @@ class PeerNode:
 
         else:
             logging.error(f"Max peers limit reached for {peer_host}:{peer_port}")
-            await self.send_package(writer, "CONNECTION REFUSED", self.peers)
+            await self.send_package(writer,
+                                    "PEERS SEND" if initial_package["ACTION"] == "SEEK PEERS" else "CONNECTION REFUSED",
+                                    self.peers)
             writer.close()
             await writer.wait_closed()
 
@@ -113,31 +118,40 @@ class PeerNode:
             await self.send_package(writer, "SEEK PEERS" if init else "SEEK CONNECTION")
 
             response_package = await self.receive_package(reader)
-
-            received_load = response_package["LOAD"]
+            package_load = response_package["LOAD"]
 
             # Choose maxpeers peers from send list based on their classes
             if response_package["ACTION"] == "PEERS SEND":
-                if received_load:
-                    for received_peer in received_load.keys():
+                if package_load:
+                    peers_sorted = self.get_classes_order(package_load)
+                    peers_contacted_counter = 0
+                    for received_peer in peers_sorted:
+                        if peers_contacted_counter >= self.max_peers:
+                            break
                         host, port = received_peer.split(":")
-                        classes = received_load[received_peer]
-                        # TODO use classes to check which to connect to
-                        if received_peer not in self.connections.keys()\
+
+                        if received_peer not in self.connections.keys() \
                                 and received_peer not in self.connections_refused:
+                            peers_contacted_counter += 1
                             asyncio.create_task(self.connect_to_peer(host, port))
+
             # Connection to specific peer could not be established: select one peer from send list
             elif response_package["ACTION"] == "CONNECTION REFUSED":
                 self.connections_refused.append(response_package["ADDRESS"][0] + ":" + response_package["ADDRESS"][1])
-                if received_load:
-                    for received_peer in received_load.keys():
+                writer.close()
+                await writer.wait_closed()
+
+                if package_load:
+                    peers_sorted = self.get_classes_order(package_load)
+                    peers_contacted_counter = 0
+                    for received_peer in peers_sorted:
+                        if peers_contacted_counter >= 1:
+                            break
                         host, port = received_peer.split(":")
-                        classes = received_load[received_peer]
-                        writer.close()
-                        await writer.wait_closed()
-                        # TODO use classes to check which to connect to
-                        if received_peer not in self.connections.keys()\
+
+                        if received_peer not in self.connections.keys() \
                                 and received_peer not in self.connections_refused:
+                            peers_contacted_counter += 1
                             asyncio.create_task(self.connect_to_peer(host, port))
             # Connection to peer was successful
             elif response_package["ACTION"] == "CONNECTION ACCEPTED":
@@ -154,23 +168,18 @@ class PeerNode:
             writer.close()
             await writer.wait_closed()
 
-    def send_message(self, connection_id, action, load=None):
-        if connection_id in self.connections:
-            _, writer = self.connections[connection_id]
+    def get_classes_order(self, package_load):
+        classes_dict = {}
+        for peer, classes in package_load.items():
+            peer_rank = 0.0
+            for c in classes:
+                if c not in self.classes:
+                    peer_rank += 1.0
+                if self.connected_classes[c] > 0:
+                    peer_rank += 1.0/self.connected_classes[c]
+            classes_dict[peer] = peer_rank
 
-            package = {
-                "ADDRESS": (self.host, self.port),
-                "ACTION": action,
-                "LOAD": load
-            }
-            package_data = pickle.dumps(package)
-            package_length = len(package_data).to_bytes(4, "big")
-
-            writer.write(package_length)
-            writer.write(package_data)
-            return True
-
-        return False
+        return sorted(classes_dict, reverse=True)
 
 
 async def main(port, connecting_port):
