@@ -14,6 +14,8 @@ class PeerNode:
         self.peers = {}
         self.connections = {}
         self.classes = [0, 10]
+        self.connected_classes = []
+        self.connections_refused = [self.host + ":" + self.port]
         self.weights = None
 
     async def start(self):
@@ -67,27 +69,37 @@ class PeerNode:
 
         initial_package = await self.receive_package(reader)
 
-        if len(self.peers) < self.max_peers:
-            logging.info(f"Accepting connection from {peer_host}:{peer_port}")
+        if len(self.peers) <= self.max_peers:
 
-            await self.send_package(writer, "CONNECTION ACCEPTED",
-                                    self.peers if initial_package["ACTION"] == "SEEK PEERS" else None)
+            if initial_package["ACTION"] == "SEEK PEERS":
+                load = self.peers
+                load[self.host+":"+self.port] = self.classes
+                await self.send_package(writer, "PEERS SEND", load)
+                logging.info(f"Send peer list to {peer_host}:{peer_port}")
+                writer.close()
+                await writer.wait_closed()
 
-            self.peers[initial_package["ADDRESS"][0] + ":" + initial_package["ADDRESS"][1]] = \
-                initial_package["ADDRESS"][2]
+            elif initial_package["ACTION"] == "SEEK CONNECTION":
+                await self.send_package(writer, "CONNECTION ACCEPTED", None)
+                logging.info(f"Accepting connection from {peer_host}:{peer_port}")
 
-            try:
-                while True:
-                    package = await self.receive_package(reader)
-                    await self.handle_request(package, writer)
+                self.peers[initial_package["ADDRESS"][0] + ":" + initial_package["ADDRESS"][1]] = \
+                    initial_package["ADDRESS"][2]
 
-            except asyncio.IncompleteReadError as e:
-                logging.error(f"Incomplete Read error: {e}")
-                pass
+                try:
+                    while True:
+                        package = await self.receive_package(reader)
+                        await self.handle_request(package, writer)
+
+                except asyncio.IncompleteReadError as e:
+                    logging.error(f"Incomplete Read error: {e}")
+                    pass
 
         else:
             logging.error(f"Max peers limit reached for {peer_host}:{peer_port}")
             await self.send_package(writer, "CONNECTION REFUSED", self.peers)
+            writer.close()
+            await writer.wait_closed()
 
         logging.info(f"Connection with {peer_host}:{peer_port} closed")
         writer.close()
@@ -102,19 +114,33 @@ class PeerNode:
 
             response_package = await self.receive_package(reader)
 
-            if response_package["ACTION"] == "CONNECTION ACCEPTED":
-                connection_id = f"{peer_host}:{peer_port}"
-                self.connections[connection_id] = (reader, writer)
-
             received_load = response_package["LOAD"]
-            if received_load:
-                for received_peer in received_load.keys():
-                    host, peer = received_peer.split(":")
-                    classes = received_load[received_peer]
-                    # TODO use classes to check which to connect to
-                    asyncio.create_task(self.connect_to_peer(host, peer))
 
-            if response_package["ACTION"] == "CONNECTION ACCEPTED":
+            # Choose maxpeers peers from send list based on their classes
+            if response_package["ACTION"] == "PEERS SEND":
+                if received_load:
+                    for received_peer in received_load.keys():
+                        host, port = received_peer.split(":")
+                        classes = received_load[received_peer]
+                        # TODO use classes to check which to connect to
+                        if received_peer not in self.connections.keys()\
+                                and received_peer not in self.connections_refused:
+                            asyncio.create_task(self.connect_to_peer(host, port))
+            # Connection to specific peer could not be established: select one peer from send list
+            elif response_package["ACTION"] == "CONNECTION REFUSED":
+                self.connections_refused.append(response_package["ADDRESS"][0] + ":" + response_package["ADDRESS"][1])
+                if received_load:
+                    for received_peer in received_load.keys():
+                        host, port = received_peer.split(":")
+                        classes = received_load[received_peer]
+                        writer.close()
+                        await writer.wait_closed()
+                        # TODO use classes to check which to connect to
+                        if received_peer not in self.connections.keys()\
+                                and received_peer not in self.connections_refused:
+                            asyncio.create_task(self.connect_to_peer(host, port))
+            # Connection to peer was successful
+            elif response_package["ACTION"] == "CONNECTION ACCEPTED":
                 connection_id = f"{peer_host}:{peer_port}"
                 self.connections[connection_id] = (reader, writer)
                 while True:
