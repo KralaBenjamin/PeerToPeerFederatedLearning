@@ -2,16 +2,17 @@ import sys
 import asyncio
 import pickle
 import logging
-import itertools
+import random
 
 logging.basicConfig(level=logging.INFO)
 
 
 class PeerNode:
-    def __init__(self, host, port, max_peers=2):
+    def __init__(self, host, port, max_peers=2, max_connections=2):
         self.host = host
         self.port = port
         self.max_peers = max_peers
+        self.max_connections = max_connections
         self.peers = {}
         self.connections = {}
         self.classes = [0, 10]
@@ -64,6 +65,13 @@ class PeerNode:
         elif package["ACTION"] == "SEEK PEERS":
             await self.send_package(writer, "PEERS SEND", self.peers)
 
+    async def handle_response(self, package):
+        if package["ACTION"] == "WEIGHTS SEND":
+            weights = package["LOAD"]
+            # TODO do something with received weights
+            # TODO what do i peer was unable to send weights?
+            # Either request different connection of retry after x seconds with asyncio.sleep()
+
     async def handle_connection(self, reader, writer):
         peer_host, peer_port = writer.get_extra_info('peername')
         logging.info(f"Incoming connection from {peer_host}:{peer_port}")
@@ -86,7 +94,7 @@ class PeerNode:
 
                 self.peers[initial_package["ADDRESS"][0] + ":" + initial_package["ADDRESS"][1]] = \
                     initial_package["ADDRESS"][2]
-                for c in initial_package["ADDRESS"][3]:
+                for c in initial_package["ADDRESS"][2]:
                     self.connected_classes[c] += 1
 
                 try:
@@ -126,7 +134,7 @@ class PeerNode:
                     peers_sorted = self.get_classes_order(package_load)
                     peers_contacted_counter = 0
                     for received_peer in peers_sorted:
-                        if peers_contacted_counter >= self.max_peers:
+                        if peers_contacted_counter >= self.max_connections:
                             break
                         host, port = received_peer.split(":")
 
@@ -159,6 +167,7 @@ class PeerNode:
                 self.connections[connection_id] = (reader, writer)
                 while True:
                     package = await self.receive_package(reader)
+                    await self.handle_response(package)
                 # Start sending/receiving messages with the connected peer
 
         except (ConnectionRefusedError, asyncio.TimeoutError):
@@ -175,15 +184,14 @@ class PeerNode:
             for c in classes:
                 if c not in self.classes:
                     peer_rank += 1.0
-                if self.connected_classes[c] > 0:
-                    peer_rank += 1.0/self.connected_classes[c]
+                peer_rank += 1.0/(self.connected_classes[c]+1.0)
             classes_dict[peer] = peer_rank
 
         return sorted(classes_dict, reverse=True)
 
 
-async def main(port, connecting_port):
-    node = PeerNode('localhost', port, max_peers=2)
+async def main(node_port, bootstrap_port):
+    node = PeerNode('localhost', node_port, max_peers=2)
 
     server_task = asyncio.create_task(node.start())
 
@@ -191,10 +199,20 @@ async def main(port, connecting_port):
     await asyncio.sleep(1)
 
     # Connect to other peers
-    if connecting_port is not None:
-        asyncio.create_task(node.connect_to_peer('localhost', connecting_port, True))
+    if bootstrap_port is not None:
+        asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
 
+    # Wait for connections to establish
+    await asyncio.sleep(10)
+
+    # TODO implement better strategy instead of random querying
     # Start sending/receiving messages with connected peers
+    # Wait random time, Select random connected peer and ask for weights
+    while True:
+        if len(node.connections) > 0:
+            await asyncio.sleep(random.randint(5, 10))
+            connection_id, (reader, writer) = random.choice(list(node.connections.items()))
+            await node.send_package(writer, "REQUEST WEIGHTS")
 
     await server_task
 
