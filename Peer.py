@@ -13,9 +13,11 @@ class PeerNode:
         self.port = port
         self.max_peers = max_peers
         self.max_connections = max_connections
-        self.peers = {}
-        self.connections = {}
-        self.classes = [0, 10]
+        self.peers = {} # Doku: Wissen über andere Peers
+        self.connections = {} # Doku: Aktive Peers, mit denen wir verbunden haben
+        self.classes = [0, 10] # Doku: Klassen, die der Peer selber hat
+        # TODO: Leere Liste
+        # TODO: Parameter für allgemeine Klassen geben.
         self.connected_classes = {key: 0 for key in range(11)}
         self.connections_refused = [self.host + ":" + self.port]
         self.weights = None
@@ -80,9 +82,9 @@ class PeerNode:
 
         if len(self.peers) <= self.max_peers:
 
-            if initial_package["ACTION"] == "SEEK PEERS":
+            if initial_package["ACTION"] == "SEEK PEERS": #TODO: Dokumentieren, was die Strings bedeuten. Enum?
                 load = self.peers
-                load[self.host + ":" + self.port] = self.classes
+                load[self.host + ":" + self.port] = self.classes #Todo: Tupel!!!!
                 await self.send_package(writer, "PEERS SEND", load)
                 logging.info(f"Send peer list to {peer_host}:{peer_port}")
                 writer.close()
@@ -92,11 +94,13 @@ class PeerNode:
                 await self.send_package(writer, "CONNECTION ACCEPTED", None)
                 logging.info(f"Accepting connection from {peer_host}:{peer_port}")
 
-                self.peers[initial_package["ADDRESS"][0] + ":" + initial_package["ADDRESS"][1]] = \
-                    initial_package["ADDRESS"][2]
-                for c in initial_package["ADDRESS"][2]:
+                host, port, classes = initial_package["ADDRESS"]
+                self.peers[host ":" + port] = \
+                    classes #TODO: In Tupeln packen
+                for c in classes:
                     self.connected_classes[c] += 1
 
+                #TODO: Nochmal überarbeiten
                 try:
                     while True:
                         package = await self.receive_package(reader)
@@ -107,7 +111,7 @@ class PeerNode:
                     pass
 
         else:
-            logging.error(f"Max peers limit reached for {peer_host}:{peer_port}")
+            logging.info(f"Max peers limit reached for {peer_host}:{peer_port}")
             await self.send_package(writer,
                                     "PEERS SEND" if initial_package["ACTION"] == "SEEK PEERS" else "CONNECTION REFUSED",
                                     self.peers)
@@ -141,7 +145,7 @@ class PeerNode:
                         if received_peer not in self.connections.keys() \
                                 and received_peer not in self.connections_refused:
                             peers_contacted_counter += 1
-                            asyncio.create_task(self.connect_to_peer(host, port))
+                            asyncio.create_task(self.connect_to_peer(host, port)) # DOKU: Hier werden eigentliche Verbindungen aufgebaut!
 
             # Connection to specific peer could not be established: select one peer from send list
             elif response_package["ACTION"] == "CONNECTION REFUSED":
@@ -182,15 +186,18 @@ class PeerNode:
         for peer, classes in package_load.items():
             peer_rank = 0.0
             for c in classes:
+                # für alle Klassen, die nicht haben, +1
                 if c not in self.classes:
                     peer_rank += 1.0
+                # für alle Klassen, die unsere Nachbarn haben
+                # ranken wir. 
                 peer_rank += 1.0/(self.connected_classes[c]+1.0)
             classes_dict[peer] = peer_rank
 
         return sorted(classes_dict, reverse=True)
 
 
-async def main(node_port, bootstrap_port):
+async def main(node_port, bootstrap_port): # DOKU: Startet neuen Peer
     node = PeerNode('localhost', node_port, max_peers=2)
 
     server_task = asyncio.create_task(node.start())
