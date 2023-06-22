@@ -230,14 +230,16 @@ async def main(node_port, bootstrap_port): # DOKU: Startet neuen Peer
         asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
 
     # Wait for connections to establish
-    await asyncio.sleep(30)
+    await asyncio.sleep(10)
 
     # TODO get rid of while True-loop
     # TODO implement better strategy instead of random querying
     # Start sending/receiving messages with connected peers
     # Wait random time, Select random connected peer and ask for weights
-    while True:
-        if len(node.connections) > 0:
+    # TODO make if before while loop?
+
+    if len(node.connections) > 0:
+        while True:
             await asyncio.sleep(random.randint(5, 10))
             connection_id, (reader, writer) = random.choice(list(node.connections.items()))
             await node.send_package(writer, "REQUEST WEIGHTS")
