@@ -11,17 +11,26 @@ class PeerNode:
     def __init__(self, host, port, max_peers=2, max_connections=2, max_classes=10):
         self.host = host
         self.port = port
-        self.max_peers = max_peers
-        self.max_connections = max_connections
-        self.peers = {} # Doku: Wissen über andere Peers
-        self.connections = {} # Doku: Aktive Peers, mit denen wir verbunden haben
-        self.classes = [1,2] # Doku: Klassen, die der Peer selber hat
-        # TODO: Parameter für allgemeine Klassen geben.
+        self.max_peers = max_peers              # number of maximal incoming connections that a peer accepts
+        self.max_connections = max_connections  # number of maximal outgoing connections that a peer tries to establish
+        # Keeps track of peers that have an incoming active connection to this peer
+        # These peers can request weights
+        # Entries of form (host, port):[classes]
+        self.peers = {}
+        # Keep track of the connected peers (outgoing connections)
+        # This peer can request weights from the connected peers
+        # Entries of form (host, port):(reader, writer) with reader and writer objects from asyncio-connection
+        self.connections = {}
+        self.classes = []       # classes (ML) of which data is present at the node
+        # Keep track of classes connected peers have present
+        # TODO make more general, instantiable for not only numbers but arbitrary class names?
         self.connected_classes = {key: 0 for key in range(max_classes+1)}
+        # Keep track of failed connection attempts to avoid multiple tries
+        # instantiated with own listening address to avoid connection attempts of peer to itself
         self.connections_refused = [(self.host, self.port)]
-        self.weights = None
+        self.weights = None     # weights (ML) to share when requested
 
-    async def start(self):
+    async def start_server(self):
         server = await asyncio.start_server(self.handle_connection, self.host, self.port)
         logging.info(f"Node listening on {self.host}:{self.port}")
 
@@ -73,6 +82,8 @@ class PeerNode:
             # TODO what do if peer was unable to send weights?
             # Either request different connection of retry after x seconds with asyncio.sleep()
 
+    # Method is called automatically when a connection the listening port (server) is established
+    # Initial incoming messages can be: "SEEK PEERS", "SEEK CONNECTION"
     async def handle_connection(self, reader, writer):
         peer_host, peer_port = writer.get_extra_info('peername')
         logging.info(f"Incoming connection from {peer_host}:{peer_port}")
@@ -80,8 +91,9 @@ class PeerNode:
         initial_package = await self.receive_package(reader)
 
         if len(self.peers) <= self.max_peers:
-
-            if initial_package["ACTION"] == "SEEK PEERS": #TODO: Dokumentieren, was die Strings bedeuten. Enum?
+            # TODO Enum?
+            # Return "PEERS SEND" with list self.peers including this node, because it still has space for connections
+            if initial_package["ACTION"] == "SEEK PEERS":
                 package_load = self.peers.copy()
                 package_load[(self.host, self.port)] = self.classes
                 await self.send_package(writer, "PEERS SEND", package_load)
@@ -89,13 +101,16 @@ class PeerNode:
                 writer.close()
                 await writer.wait_closed()
 
+            # Still space for connection: return "CONNECTION ACCEPTED"
             elif initial_package["ACTION"] == "SEEK CONNECTION":
                 await self.send_package(writer, "CONNECTION ACCEPTED", None)
                 logging.info(f"Accepting connection from {peer_host}:{peer_port}")
 
+                # Update list self.peers
                 host, port, classes = initial_package["ADDRESS"]
                 self.peers[(host, port)] = classes
 
+                # Established connection: wait for receiving packages (requests) in infinite loop
                 try:
                     while True:
                         package = await self.receive_package(reader)
@@ -104,7 +119,8 @@ class PeerNode:
                 except asyncio.IncompleteReadError as e:
                     logging.error(f"Incomplete Read error: {e}")
                     pass
-
+        # No more connections possible: send list self.peers and close connection
+        # Depending on incoming message, either respond with "PEERS SEND" or "CONNECTION REFUSED"
         else:
             logging.info(f"Max peers limit reached for {peer_host}:{peer_port}")
             await self.send_package(writer,
@@ -117,17 +133,21 @@ class PeerNode:
         writer.close()
         await writer.wait_closed()
 
+    # Method for trying to establish a connection to a peer
+    # Only for initially entering the network (bootstrapping), init should be set True
     async def connect_to_peer(self, peer_host, peer_port, init=False):
         try:
             reader, writer = await asyncio.open_connection(peer_host, peer_port)
             logging.info(f"Connected to peer {peer_host}:{peer_port}")
 
+            # For bootstrapping, send "SEEK PEERS". Else, send "SEEK CONNECTION"
             await self.send_package(writer, "SEEK PEERS" if init else "SEEK CONNECTION")
 
             response_package = await self.receive_package(reader)
             package_load = response_package["LOAD"]
 
-            # Choose maxpeers peers from send list based on their classes
+            # List of peers from bootstrapping peer was received
+            # Choose self.max_connections peers from list based on their ranked classes and try to connect to them
             if response_package["ACTION"] == "PEERS SEND":
                 if package_load:
                     peers_sorted = self.get_classes_order(package_load)
@@ -139,7 +159,8 @@ class PeerNode:
                         if (host, port) not in self.connections.keys() \
                                 and (host, port) not in self.connections_refused:
                             peers_contacted_counter += 1
-                            asyncio.create_task(self.connect_to_peer(host, port)) # DOKU: Hier werden eigentliche Verbindungen aufgebaut!
+                            # Here, the actual connections are requested
+                            asyncio.create_task(self.connect_to_peer(host, port))
 
             # Connection to specific peer could not be established: select one peer from send list
             elif response_package["ACTION"] == "CONNECTION REFUSED":
@@ -158,17 +179,19 @@ class PeerNode:
                                 and (host, port) not in self.connections_refused:
                             peers_contacted_counter += 1
                             asyncio.create_task(self.connect_to_peer(host, port))
+
             # Connection to peer was successful
             elif response_package["ACTION"] == "CONNECTION ACCEPTED":
+                # update self.connections and self.connected_classes
                 self.connections[(peer_host, peer_port)] = (reader, writer)
                 _, _, classes = response_package["ADDRESS"]
                 for c in classes:
                     self.connected_classes[c] += 1
 
+                # Wait for responses from connected peer in infinite loop
                 while True:
                     package = await self.receive_package(reader)
                     await self.handle_response(package)
-                # Start sending/receiving messages with the connected peer
 
         except (ConnectionRefusedError, asyncio.TimeoutError):
             logging.error(f"Failed to connect to peer {peer_host}:{peer_port}")
@@ -177,16 +200,17 @@ class PeerNode:
             writer.close()
             await writer.wait_closed()
 
+    # sort dict of (host, port):[classes] by ranking classes
+    # depending on self.classes and frequency in self.connected_classes
     def get_classes_order(self, package_load):
         classes_dict = {}
         for (host, port), classes in package_load.items():
             peer_rank = 0.0
             for c in classes:
-                # für alle Klassen, die nicht haben, +1
+                # for each class that is not present as data at peer: +1
                 if c not in self.classes:
                     peer_rank += 1.0
-                # für alle Klassen, die unsere Nachbarn haben
-                # ranken wir. 
+                # for classes that already established connections have: rank descending by amount
                 peer_rank += 1.0/(self.connected_classes[c]+1.0)
             classes_dict[(host, port)] = peer_rank
 
@@ -196,7 +220,7 @@ class PeerNode:
 async def main(node_port, bootstrap_port): # DOKU: Startet neuen Peer
     node = PeerNode('localhost', node_port, max_peers=2)
 
-    server_task = asyncio.create_task(node.start())
+    server_task = asyncio.create_task(node.start_server())
 
     # Wait for the servers to start (optional)
     await asyncio.sleep(1)
@@ -206,8 +230,9 @@ async def main(node_port, bootstrap_port): # DOKU: Startet neuen Peer
         asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
 
     # Wait for connections to establish
-    await asyncio.sleep(10)
+    await asyncio.sleep(30)
 
+    # TODO get rid of while True-loop
     # TODO implement better strategy instead of random querying
     # Start sending/receiving messages with connected peers
     # Wait random time, Select random connected peer and ask for weights
