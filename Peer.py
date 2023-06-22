@@ -18,7 +18,7 @@ class PeerNode:
         self.classes = [1,2] # Doku: Klassen, die der Peer selber hat
         # TODO: Parameter für allgemeine Klassen geben.
         self.connected_classes = {key: 0 for key in range(max_classes+1)}
-        self.connections_refused = [(self.host,self.port)]
+        self.connections_refused = [(self.host, self.port)]
         self.weights = None
 
     async def start(self):
@@ -82,7 +82,7 @@ class PeerNode:
         if len(self.peers) <= self.max_peers:
 
             if initial_package["ACTION"] == "SEEK PEERS": #TODO: Dokumentieren, was die Strings bedeuten. Enum?
-                package_load = self.peers
+                package_load = self.peers.copy()
                 package_load[(self.host, self.port)] = self.classes
                 await self.send_package(writer, "PEERS SEND", package_load)
                 logging.info(f"Send peer list to {peer_host}:{peer_port}")
@@ -179,7 +179,7 @@ class PeerNode:
 
     def get_classes_order(self, package_load):
         classes_dict = {}
-        for peer, classes in package_load.items():
+        for (host, port), classes in package_load.items():
             peer_rank = 0.0
             for c in classes:
                 # für alle Klassen, die nicht haben, +1
@@ -188,7 +188,7 @@ class PeerNode:
                 # für alle Klassen, die unsere Nachbarn haben
                 # ranken wir. 
                 peer_rank += 1.0/(self.connected_classes[c]+1.0)
-            classes_dict[peer] = peer_rank
+            classes_dict[(host, port)] = peer_rank
 
         return sorted(classes_dict, reverse=True)
 
@@ -203,11 +203,10 @@ async def main(node_port, bootstrap_port): # DOKU: Startet neuen Peer
 
     # Connect to other peers
     if bootstrap_port is not None:
-        await node.connect_to_peer('localhost', bootstrap_port, True)
-        #asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
+        asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
 
     # Wait for connections to establish
-    #await asyncio.sleep(10)
+    await asyncio.sleep(10)
 
     # TODO implement better strategy instead of random querying
     # Start sending/receiving messages with connected peers
