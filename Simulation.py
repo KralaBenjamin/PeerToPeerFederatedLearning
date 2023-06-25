@@ -1,6 +1,9 @@
 import sys
 import asyncio
 import random
+
+import networkx
+
 import Peer
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -107,12 +110,12 @@ def create_plot(graph, color_map, data_aggregated):
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
 
     axes[0, 0].bar(incoming_connections_aggr.keys(), incoming_connections_aggr.values())
-    axes[0, 0].set_title('Distribution of incoming connections')
+    axes[0, 0].set_title('Degree Distribution of incoming connections')
     axes[0, 0].set_xlabel('# Connections')
     axes[0, 0].set_ylabel('# Nodes')
 
     axes[0, 1].bar(outgoing_connections_aggr.keys(), outgoing_connections_aggr.values())
-    axes[0, 1].set_title('Distribution of outgoing connections')
+    axes[0, 1].set_title('Degree Distribution of outgoing connections')
     axes[0, 1].set_xlabel('# Connections')
     axes[0, 1].set_ylabel('# Nodes')
 
@@ -126,17 +129,18 @@ def create_plot(graph, color_map, data_aggregated):
     axes[1, 1].set_xlabel('Class')
     axes[1, 1].set_ylabel('Frequency')
 
-    nx.draw_networkx(graph, with_labels=True, arrows=True, node_color=color_map, edge_color='gray', node_size=50,
-                     font_size=6)
-
     # Plot the NetworkX graph
+    axes[0, 2].axis('off')
     axes[0, 2].set_title('Network Diagram')
     pos = nx.spring_layout(graph)
     nx.draw_networkx(graph, pos, ax=axes[0, 2], with_labels=True, arrows=True,
                      node_color=color_map, edge_color='gray', node_size=50, font_size=6)
 
-    # Remove unused subplots
-    fig.delaxes(axes[1, 2])
+    # Add network metrics
+    axes[1, 2].axis('off')
+    axes[1, 2].text(0, 0.9, "Network metrics", fontweight='bold')
+    axes[1, 2].text(0, 0.7, f"Network diameter: {networkx.diameter(graph.to_undirected())}")
+    axes[1, 2].text(0, 0.5, f"Average path length: {networkx.average_shortest_path_length(graph)}")
 
     # Adjust spacing between subplots
     fig.tight_layout()
