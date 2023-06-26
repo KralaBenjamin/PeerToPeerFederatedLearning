@@ -35,15 +35,19 @@ class PeerNode:
         # instantiated with own listening address to avoid connection attempts of peer to itself
         self.connections_refused = [(self.host, self.port)]
 
-        # Keep track of recent incoming connection attempts to give as new peers
+        # Keep track of recent incoming peer connection attempts to use as new peers
         # Queue of fixed length: always keep most current entries
-        self.current_connections = deque(maxlen=10*max_connections)
+        self.current_peers = deque(maxlen=10 * max_connections)
 
         self.weights = None     # weights (ML) to share when requested
 
     async def start_server(self):
+        # start server on listening port
         server = await asyncio.start_server(self.handle_connection, self.host, self.port)
         logging.info(f"Node listening on {self.host}:{self.port}")
+
+        # start soft state checking here
+        asyncio.create_task(self.check_connections_soft_state())
 
         async with server:
             await server.serve_forever()
@@ -84,7 +88,7 @@ class PeerNode:
             else:
                 await self.send_package(writer, "UNABLE TO SEND WEIGHTS")
         elif package["ACTION"] == "SEEK PEERS":
-            await self.send_package(writer, "PEERS SEND", list(self.current_connections))
+            await self.send_package(writer, "PEERS SEND", list(self.current_peers))
 
     async def handle_response(self, package):
         if package["ACTION"] == "WEIGHTS SEND":
@@ -101,14 +105,15 @@ class PeerNode:
 
         initial_package = await self.receive_package(reader)
 
-        self.current_connections.append(initial_package["ADDRESS"])
+        if initial_package["ADDRESS"] not in self.current_peers:
+            self.current_peers.append(initial_package["ADDRESS"])
 
         if len(self.peers) < self.max_peers:
             # TODO Enum?
             # Return "PEERS SEND" with list self.current_connections
             # including this node, because it still has space for connections
             if initial_package["ACTION"] == "SEEK PEERS":
-                package_load = list(self.current_connections.copy())
+                package_load = list(self.current_peers.copy())
                 package_load.append((self.host, self.port, self.classes))
                 await self.send_package(writer, "PEERS SEND", package_load)
                 logging.info(f"Send peer list to {peer_host}:{peer_port}")
@@ -131,7 +136,8 @@ class PeerNode:
                         await self.handle_request(package, writer)
 
                 except asyncio.IncompleteReadError as e:
-                    logging.error(f"Incomplete Read error: {e}")
+                    logging.error(f"Incomplete Read error: {e}. Lost peer at {host, port}")
+                    self.peers.pop((host, port), "")
                     pass
         # No more connections possible: send list self.current_connections and close connection
         # Depending on incoming message, either respond with "PEERS SEND" or "CONNECTION REFUSED"
@@ -139,7 +145,7 @@ class PeerNode:
             logging.info(f"Max peers limit reached for {peer_host}:{peer_port}")
             await self.send_package(writer,
                                     "PEERS SEND" if initial_package["ACTION"] == "SEEK PEERS" else "CONNECTION REFUSED",
-                                    list(self.current_connections))
+                                    list(self.current_peers))
             writer.close()
             await writer.wait_closed()
 
@@ -163,8 +169,6 @@ class PeerNode:
             # List of peers from bootstrapping peer was received
             # Choose self.max_connections peers from list randomly
             if response_package["ACTION"] == "PEERS SEND":
-                # TODO what if len(package_load) < number required connections
-                #  now: ignore this, in future: second SEEK PEERS to other peer?
                 for i in range(min(self.max_connections-len(self.connections), len(package_load))):
                     if package_load:
                         random_peer = random.choice(package_load)           # select random peer
@@ -202,12 +206,38 @@ class PeerNode:
                     self.connected_classes[c] += 1
 
                 # Wait for responses from connected peer in infinite loop
-                while True:
-                    package = await self.receive_package(reader)
-                    await self.handle_response(package)
+                try:
+                    while True:
+                        package = await self.receive_package(reader)
+                        await self.handle_response(package)
+                except asyncio.IncompleteReadError as e:
+                    logging.error(f"IncompleteReadError: {e}. Lost connection to {peer_host, peer_port}")
+                    self.connections.pop((peer_host, peer_port), "")
+
+                    # select randomly new peer and initiate getting new connections
+                    if len(self.current_peers) > 0:
+                        new_host, new_port, _ = random.choice(self.current_peers)
+                        asyncio.create_task(self.connect_to_peer(new_host, new_port, init=True))
+                    elif len(self.connections) > 0:
+                        new_host, new_port = random.choice(self.connections.keys())
+                        asyncio.create_task(self.connect_to_peer(new_host, new_port, init=True))
+                    pass
 
         except (ConnectionRefusedError, asyncio.TimeoutError):
             logging.error(f"Failed to connect to peer {peer_host}:{peer_port}")
+
+    async def check_connections_soft_state(self):
+        while True:
+            await asyncio.sleep(10)
+            logging.info(f"Soft State checked. {len(self.connections)} out of {self.max_connections} connections present.")
+            if len(self.connections) < self.max_connections:
+                # select randomly new peer and initiate getting new connections
+                if len(self.current_peers) > 0:
+                    new_host, new_port, _ = random.choice(self.current_peers)
+                    asyncio.create_task(self.connect_to_peer(new_host, new_port, init=True))
+                elif len(self.connections) > 0:
+                    new_host, new_port = random.choice(self.connections.keys())
+                    asyncio.create_task(self.connect_to_peer(new_host, new_port, init=True))
 
     # sort dict of (host, port):[classes] by ranking classes
     # depending on self.classes and frequency in self.connected_classes
