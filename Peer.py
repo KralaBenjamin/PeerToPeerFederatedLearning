@@ -4,6 +4,7 @@ import pickle
 import logging
 import random
 from collections import deque
+from ml_class import MLModell
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,8 +42,20 @@ class PeerNode:
 
         self.weights = None     # weights (ML) to share when requested
 
+    async def calculate_ml_stuff(self):
+        self.model = MLModell()
+        while True:
+            # Hier könnte deine Berechnung stehen
+            print('Doing some ml...')
+            self.model.train()
+            await asyncio.sleep(10)  # Warte für 10 Sekunden
+
+
     async def start_server(self):
         # start server on listening port
+
+        ml_task = asyncio.create_task(self.calculate_ml_stuff())
+
         server = await asyncio.start_server(self.handle_connection, self.host, self.port)
         logging.info(f"Node listening on {self.host}:{self.port}")
 
@@ -51,6 +64,12 @@ class PeerNode:
 
         async with server:
             await server.serve_forever()
+
+        ml_task.cancel()
+        try:
+            await ml_task
+        except asyncio.CancelledError:
+            pass
 
     async def receive_package(self, reader):
         package_length_data = await reader.readexactly(4)
