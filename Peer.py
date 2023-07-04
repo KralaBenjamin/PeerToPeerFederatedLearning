@@ -103,7 +103,11 @@ class PeerNode:
 
         writer.write(package_length)
         writer.write(package_data)
-        await writer.drain()
+        if writer.transport._conn_lost:
+            writer.close()
+            await writer.wait_closed()
+        else:
+            await writer.drain()
 
     async def handle_request(self, package, writer):
         if package["ACTION"] == "REQUEST WEIGHTS":
@@ -132,7 +136,6 @@ class PeerNode:
             self.current_peers.append(initial_package["ADDRESS"])
 
         if len(self.peers) < self.max_peers:
-            # TODO Enum?
             # Return "PEERS SEND" with list self.current_connections
             # including this node, because it still has space for connections
             if initial_package["ACTION"] == "SEEK PEERS":
@@ -255,7 +258,7 @@ class PeerNode:
             await asyncio.sleep(10)
             logging.info(
                 f"Soft State checked. {len(self.connections)} out of {self.max_connections} connections present.")
-            if len(self.connections) < self.max_connections:
+            if len(self.connections) < self.max_connections/2:
                 # select randomly new peer and initiate getting new connections
                 if len(self.current_peers) > 0:
                     (new_host, new_port, _) = random.choice(self.current_peers)
@@ -263,6 +266,30 @@ class PeerNode:
                 elif len(self.connections) > 0:
                     (new_host, new_port) = random.choice(list(self.connections.keys()))
                     asyncio.create_task(self.connect_to_peer(new_host, new_port, init=True))
+            elif len(self.connections) > self.max_connections:
+                for i in range(len(self.connections)-self.max_connections):
+                    (_, _), (reader, writer) = self.connections.popitem()
+                    writer.close()
+                    await writer.wait_closed()
+
+    async def query_average_loop(self):
+        while True:
+            await asyncio.sleep(random.randint(1, 2)/10.0)
+            if len(self.connections) > 0:
+                for connected_node, (_, writer) in self.connections.items():
+                    await self.send_package(writer, "REQUEST WEIGHTS")
+                await asyncio.sleep(3)
+                collected_state_dicts = []
+                for connected_node, state_dict in self.received_state_dicts.items():
+                    if state_dict is not None:
+                        collected_state_dicts.append(state_dict)
+                        self.received_state_dicts[connected_node] = None
+
+                if len(collected_state_dicts)>0:
+                    logging.info(f"Averaging over {len(collected_state_dicts)} state dicts.")
+                    self.model.average(collected_state_dicts)
+                else:
+                    logging.info(f"No state dicts received.")
 
     # sort dict of (host, port):[classes] by ranking classes
     # depending on self.classes and frequency in self.connected_classes
@@ -305,11 +332,12 @@ async def main(node_port, bootstrap_port):  # DOKU: Startet neuen Peer
             await asyncio.sleep(random.randint(1, 5))
             for connected_node, (_, writer) in node.connections.items():
                 await node.send_package(writer, "REQUEST WEIGHTS")
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
             collected_state_dicts = []
             for connected_node, state_dict in node.received_state_dicts.items():
                 if state_dict is not None:
                     collected_state_dicts.append(state_dict)
+                    node.received_state_dicts[connected_node] = None
 
             logging.info(f"Averaging over {len(collected_state_dicts)} state dicts.")
             node.model.average(collected_state_dicts)

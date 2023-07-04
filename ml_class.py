@@ -15,36 +15,77 @@ class MLModell:
     # handles all ML stuff
 
     def __init__(self, train_dataloader=None, test_dataloader=None,
-                 learning_rate=0.001, num_epochs=1, max_n=5, ):
+                 learning_rate=0.001, num_epochs=2, max_n=5, batch_size=64,
+                 num_classes=3, num_train_samples=128, num_test_samples=512):
 
-        # TODO replace by selection based on classes: random data of only n classes available
         if train_dataloader is None or test_dataloader is None:
-            train_dataset_full = torchvision.datasets.FashionMNIST(root='./data',
-                                                              train=True,
-                                                              transform=transforms.Compose([
-                                                                  transforms.ToTensor()
-                                                              ]),
-                                                              download=True)
+            random_classes = random.sample(range(10), num_classes)      # select random classes
 
-            train_dataset, _ = torch.utils.data.random_split(train_dataset_full, [20, len(train_dataset_full)-20])
+            # Load full train and test datasets
+            train_dataset_full = torchvision.datasets.FashionMNIST(root='./data',
+                                                                   train=True,
+                                                                   transform=transforms.Compose([
+                                                                       transforms.ToTensor(),
+                                                                       transforms.Normalize((0.5,), (0.5,))
+                                                                   ]),
+                                                                   download=True)
 
             test_dataset_full = torchvision.datasets.FashionMNIST(root='./data',
-                                                             train=False,
-                                                             transform=transforms.Compose([
-                                                                 transforms.ToTensor()
-                                                             ]),
-                                                             download=True)
+                                                                  train=False,
+                                                                  transform=transforms.Compose([
+                                                                      transforms.ToTensor(),
+                                                                      transforms.Normalize((0.5,), (0.5,))
+                                                                  ]),
+                                                                  download=True)
 
-            test_dataset, _ = torch.utils.data.random_split(test_dataset_full, [20, len(test_dataset_full)-20])
+            train_dataset = []
+            test_dataset = []
+            included_train_indices = []
+            included_test_indices = []
+            train_index = 0
+            test_index = 0
+
+            # sample from train dataset without duplicates and only classes from above random step
+            while train_index < num_train_samples:
+                random_sample_index = random.choice(range(len(train_dataset_full)))
+
+                # skip duplicates
+                if random_sample_index in included_train_indices:
+                    continue
+
+                # skip other classes
+                (_, data) = train_dataset_full.__getitem__(random_sample_index)
+                if data not in random_classes:
+                    continue
+
+                # add to train dataset
+                train_dataset.append(train_dataset_full.__getitem__(random_sample_index))
+                included_train_indices.append(random_sample_index)
+                train_index += 1
+
+            print(f"Created train dataset with classes {random_classes} of size {len(train_dataset)}")
+
+            # Do the same for test dataset
+            # TODO should the test dataset contain all classes?
+            while test_index < num_test_samples:
+                random_sample_index = random.choice(range(len(test_dataset_full)))
+
+                if random_sample_index in included_test_indices:
+                    continue
+
+                test_dataset.append(test_dataset_full.__getitem__(random_sample_index))
+                included_test_indices.append(random_sample_index)
+                test_index += 1
+
+            print(f"Created test dataset with classes {random_classes} of size {len(train_dataset)}")
 
             train_dataloader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                                           batch_size=64,
+                                                           batch_size=batch_size,
                                                            shuffle=True)
 
             test_dataloader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                                          batch_size=64,
-                                                          shuffle=True
-                                                          )
+                                                          batch_size=batch_size,
+                                                          shuffle=True)
             self.classes = self.get_classes(train_dataset)
 
         self.train_dataloader = train_dataloader
@@ -54,6 +95,8 @@ class MLModell:
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
         self.max_n = max_n
+
+        self.test_results = []
 
     def get_classes(self, train_dataset):
         classes_set = set()
@@ -83,6 +126,26 @@ class MLModell:
                                                                             self.num_epochs, i + 1,
                                                                             len(list(self.train_dataloader)),
                                                                             loss.item()))
+        # Record test results after each training step
+        self.test()
+
+    def test(self):
+        # Testen des Modells
+        self.model.eval()
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            for images, labels in self.test_dataloader:
+                outputs = self.model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            accuracy = correct / total
+
+            print(f"Genauigkeit des Modells auf Testdaten: {100*accuracy} ")
+            self.test_results.append(accuracy)
+
+        return accuracy
 
     def average(self, new_statedicts):
         # Append weights by current own weights
@@ -95,8 +158,10 @@ class MLModell:
                 own_statedict[key] += statedict[key]
             own_statedict[key] = torch.divide(own_statedict[key], len(new_statedicts) + 1)
 
-        # load new statedict and train again
-        self.model.load_state_dict(own_statedict)
+        # load averaged statedict in new model and train again
+        new_model = LeNet()
+        new_model.load_state_dict(own_statedict)
+        self.model = new_model
         self.train()
 
     def get_current_weights(self):
