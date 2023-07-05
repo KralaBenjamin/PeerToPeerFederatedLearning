@@ -12,7 +12,8 @@ logging.basicConfig(level=logging.INFO)
 class PeerNode:
     def __init__(self, host, port, max_peers=2,
                  max_connections=2, max_classes=10,
-                 num_epochs=2, num_training_samples=128):
+                 num_epochs=2, ml_type='avg',
+                 num_training_samples=128, num_test_samples=512):
         self.model = None
         self.host = host
         self.port = port
@@ -23,6 +24,8 @@ class PeerNode:
         # ML settings
         self.num_epochs = num_epochs
         self.num_training_samples = num_training_samples
+        self.num_test_samples = num_test_samples
+        self.ml_type = ml_type
 
         # Keeps track of peers that have an incoming active connection to this peer
         # These peers can request weights
@@ -54,7 +57,9 @@ class PeerNode:
         self.current_peers = deque(maxlen=10 * max_connections)
 
     def initialize_ml_stuff(self):
-        self.model = MLModell(num_epochs=self.num_epochs, num_train_samples=self.num_training_samples)
+        self.model = MLModell(num_epochs=self.num_epochs,
+                              num_train_samples=self.num_training_samples,
+                              num_test_samples=self.num_test_samples)
         self.classes = self.model.classes
 
         print('Initializing some ml...')
@@ -69,7 +74,7 @@ class PeerNode:
         logging.info(f"Node listening on {self.host}:{self.port}")
 
         # create ml query avergae loop
-        asyncio.create_task(self.query_average_loop())
+        asyncio.create_task(self.query_combine_loop())
 
         # start soft state checking here
         asyncio.create_task(self.check_connections_soft_state())
@@ -274,7 +279,7 @@ class PeerNode:
                     writer.close()
                     await writer.wait_closed()
 
-    async def query_average_loop(self):
+    async def query_combine_loop(self):
         while True:
             await asyncio.sleep(random.randint(1, 2)/10.0)
             if len(self.connections) > 0:
@@ -289,7 +294,10 @@ class PeerNode:
 
                 if len(collected_state_dicts)>0:
                     logging.info(f"Averaging over {len(collected_state_dicts)} state dicts.")
-                    self.model.average(collected_state_dicts)
+                    if self.ml_type == "avg":
+                        self.model.average(collected_state_dicts)
+                    elif self.ml_type == "max":
+                        self.model.select_max(collected_state_dicts)
                 else:
                     logging.info(f"No state dicts received.")
 

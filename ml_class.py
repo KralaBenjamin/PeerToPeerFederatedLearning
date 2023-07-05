@@ -15,11 +15,12 @@ class MLModell:
     # handles all ML stuff
 
     def __init__(self, train_dataloader=None, test_dataloader=None,
+                 val_dataloader=None, val_global_dataloader=None,
                  learning_rate=0.001, num_epochs=2, max_n=5, batch_size=64,
-                 num_classes=3, num_train_samples=128, num_test_samples=512):
+                 num_classes=3, num_train_samples=128, num_test_samples=512, num_val_samples=1024):
 
         if train_dataloader is None or test_dataloader is None:
-            random_classes = random.sample(range(10), num_classes)      # select random classes
+            random_classes = random.sample(range(10), num_classes)  # select random classes
 
             # Load full train and test datasets
             train_dataset_full = torchvision.datasets.FashionMNIST(root='./data',
@@ -30,54 +31,24 @@ class MLModell:
                                                                    ]),
                                                                    download=True)
 
-            test_dataset_full = torchvision.datasets.FashionMNIST(root='./data',
-                                                                  train=False,
-                                                                  transform=transforms.Compose([
-                                                                      transforms.ToTensor(),
-                                                                      transforms.Normalize((0.5,), (0.5,))
-                                                                  ]),
-                                                                  download=True)
+            val_global_dataset = torchvision.datasets.FashionMNIST(root='./data',
+                                                                   train=False,
+                                                                   transform=transforms.Compose([
+                                                                       transforms.ToTensor(),
+                                                                       transforms.Normalize((0.5,), (0.5,))
+                                                                   ]),
+                                                                   download=True)
 
-            train_dataset = []
-            test_dataset = []
-            included_train_indices = []
-            included_test_indices = []
-            train_index = 0
-            test_index = 0
+            # All datasets are created from train data, so the test data can be used for the overall validation
+            # The already used indices are passed to avoid any sample showing up twice in a local dataset
+            train_dataset, train_indices = self.create_dataset(train_dataset_full, num_train_samples,
+                                                               [], random_classes)
+            test_dataset, test_indices = self.create_dataset(train_dataset_full, num_test_samples,
+                                                             train_indices, random_classes)
+            val_dataset, val_indices = self.create_dataset(train_dataset_full, num_val_samples,
+                                                           test_indices)
 
-            # sample from train dataset without duplicates and only classes from above random step
-            while train_index < num_train_samples:
-                random_sample_index = random.choice(range(len(train_dataset_full)))
-
-                # skip duplicates
-                if random_sample_index in included_train_indices:
-                    continue
-
-                # skip other classes
-                (_, data) = train_dataset_full.__getitem__(random_sample_index)
-                if data not in random_classes:
-                    continue
-
-                # add to train dataset
-                train_dataset.append(train_dataset_full.__getitem__(random_sample_index))
-                included_train_indices.append(random_sample_index)
-                train_index += 1
-
-            print(f"Created train dataset with classes {random_classes} of size {len(train_dataset)}")
-
-            # Do the same for test dataset
-            # TODO should the test dataset contain all classes?
-            while test_index < num_test_samples:
-                random_sample_index = random.choice(range(len(test_dataset_full)))
-
-                if random_sample_index in included_test_indices:
-                    continue
-
-                test_dataset.append(test_dataset_full.__getitem__(random_sample_index))
-                included_test_indices.append(random_sample_index)
-                test_index += 1
-
-            print(f"Created test dataset with classes {random_classes} of size {len(train_dataset)}")
+            print(f"Created datasets with classes {random_classes}")
 
             train_dataloader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                            batch_size=batch_size,
@@ -86,17 +57,53 @@ class MLModell:
             test_dataloader = torch.utils.data.DataLoader(dataset=test_dataset,
                                                           batch_size=batch_size,
                                                           shuffle=True)
+
+            val_dataloader = torch.utils.data.DataLoader(dataset=val_dataset,
+                                                         batch_size=batch_size,
+                                                         shuffle=True)
+
+            val_global_dataloader = torch.utils.data.DataLoader(dataset=val_global_dataset,
+                                                                batch_size=batch_size,
+                                                                shuffle=True)
+
+            # set owned classes
             self.classes = self.get_classes(train_dataset)
 
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
+        self.val_dataloader = val_dataloader
+        self.val_global_dataloader = val_global_dataloader
 
         self.model = LeNet()
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
         self.max_n = max_n
 
-        self.test_results = []
+        self.val_results = []
+
+    def create_dataset(self, full_dataset, num_samples, covered_indices, classes=None):
+        sample_index = 0
+        result_dataset = []
+        while sample_index < num_samples:
+            # select random index from dataset
+            random_sample_index = random.choice(range(len(full_dataset)))
+
+            # skip duplicates
+            if random_sample_index in covered_indices:
+                continue
+
+            # skip other classes
+            if classes is not None:
+                (_, data) = full_dataset.__getitem__(random_sample_index)
+                if data not in classes:
+                    continue
+
+            # add to train dataset
+            result_dataset.append(full_dataset.__getitem__(random_sample_index))
+            covered_indices.append(random_sample_index)
+            sample_index += 1
+
+        return result_dataset, covered_indices
 
     def get_classes(self, train_dataset):
         classes_set = set()
@@ -127,7 +134,7 @@ class MLModell:
                                                                             len(list(self.train_dataloader)),
                                                                             loss.item()))
         # Record test results after each training step
-        self.test()
+        self.validate()
 
     def test(self):
         # Testen des Modells
@@ -142,8 +149,60 @@ class MLModell:
                 correct += (predicted == labels).sum().item()
             accuracy = correct / total
 
-            print(f"Genauigkeit des Modells auf Testdaten: {100*accuracy} ")
-            self.test_results.append(accuracy)
+            print(f"Genauigkeit des Modells auf Testdaten: {100 * accuracy} ")
+
+        return accuracy
+
+    def test_model(self, state_dict):
+        new_model = LeNet()
+        new_model.load_state_dict(state_dict)
+        new_model.eval()
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            for images, labels in self.test_dataloader:
+                outputs = new_model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            accuracy = correct / total
+
+            print(f"Genauigkeit des Modells auf Testdaten: {100 * accuracy} ")
+
+        return accuracy
+
+    def validate(self):
+        # Testen des Modells
+        self.model.eval()
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            for images, labels in self.val_dataloader:
+                outputs = self.model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            accuracy = correct / total
+
+            print(f"Genauigkeit des Modells auf lokaler Validation: {100 * accuracy} ")
+            self.val_results.append(accuracy)
+
+        return accuracy
+
+    def validate_global(self):
+        # Testen des Modells
+        self.model.eval()
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            for images, labels in self.val_global_dataloader:
+                outputs = self.model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            accuracy = correct / total
+
+            print(f"Genauigkeit des Modells auf globaler Validation: {100 * accuracy} ")
 
         return accuracy
 
@@ -164,12 +223,22 @@ class MLModell:
         self.model = new_model
         self.train()
 
-    def select_max(self, new_statedicts):
-        own_statedict = copy.deepcopy(self.model.state_dict())
-        new_statedicts.append(own_statedict)
+    def select_max(self, state_dicts):
+        own_state_dict = copy.deepcopy(self.model.state_dict())
+        state_dicts.append(own_state_dict)
 
-        # TODO select maximal scored state_dict
+        comp_list = [None] * len(state_dicts)
 
+        for dict_index, state_dict in enumerate(state_dicts):
+            comp_list[dict_index] = self.test_model(state_dict)
+
+        max_dict_index = comp_list.index(max(comp_list))
+
+        # load maximal statedict in new model and train again
+        new_model = LeNet()
+        new_model.load_state_dict(state_dicts[max_dict_index])
+        self.model = new_model
+        self.train()
 
     def get_current_weights(self):
         if self.model is not None:

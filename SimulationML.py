@@ -1,12 +1,14 @@
 import sys
 import asyncio
 import random
-
-import networkx
+import time
+import numpy as np
 
 import Peer
 import networkx as nx
 import matplotlib.pyplot as plt
+
+SIMULATION_TIME = 300
 
 
 class NetworkSimulator:
@@ -18,18 +20,18 @@ class NetworkSimulator:
         # Start the nodes in parallel
         for (node, bootstrap_port) in self.nodes:
             server_task = asyncio.create_task(node.start_server())
-            await asyncio.sleep(0.5)                                    # wait for server to start listening
+            await asyncio.sleep(0.5)  # wait for server to start listening
             tasks.append(server_task)
-            if bootstrap_port is not None:                              # connect to bootstrap host
+            if bootstrap_port is not None:  # connect to bootstrap host
                 connect_task = asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
                 tasks.append(connect_task)
 
-            #tasks.append(query_loop_task)
+            # tasks.append(query_loop_task)
 
         # Wait for all connections to establish
         try:
             # Wait for all connections to establish within the timeout
-            await asyncio.wait_for(asyncio.gather(*tasks), 300)
+            await asyncio.wait_for(asyncio.gather(*tasks), SIMULATION_TIME)
         except asyncio.TimeoutError:
             pass
 
@@ -47,7 +49,8 @@ class NetworkSimulator:
                          'peers': list(node.peers.keys()),
                          'connections': list(node.connections.keys()),
                          'connected_classes': node.connected_classes,
-                         'test_results': node.model.test_results}
+                         'val_local': node.model.val_results,
+                         'val_global': node.model.validate_global()}
             connection_info.append(node_info)
         return connection_info
 
@@ -58,7 +61,8 @@ def aggregate_data(connection_info, index_non_bootstrap):
     outgoing_connections_aggr = {key: 0 for key in range(15)}
     classes_owned_aggr = {key: 0 for key in range(10)}
     classes_connected_aggr = {key: 0 for key in range(10)}
-    test_results_aggr = []
+    val_local_aggr = []
+    val_global_aggr = []
 
     color_map = []
 
@@ -69,9 +73,8 @@ def aggregate_data(connection_info, index_non_bootstrap):
         connections = node_info['connections']
         classes_owned = node_info['classes']
         classes_connected = node_info['connected_classes']
-        test_results_aggr.append(node_info['test_results'])
-
-        print(f"Node with {node_info}")
+        val_local_aggr.append(node_info['val_local'])
+        val_global_aggr.append(node_info['val_global'])
 
         # Collect aggregated data only for non-bootstrap peers
         if port >= index_non_bootstrap:
@@ -104,20 +107,21 @@ def aggregate_data(connection_info, index_non_bootstrap):
             'outgoing_conn': outgoing_connections_aggr,
             'classes_owned': classes_owned_aggr,
             'classes_conn': classes_connected_aggr,
-            'test_results': test_results_aggr
+            'val_local': val_local_aggr,
+            'val_global': val_global_aggr
         }
 
     return create_plot(graph, color_map, data_aggregated)
 
 
 def create_plot(graph, color_map, data_aggregated):
-
     # Retrieve data for charts from dict
     incoming_connections_aggr = data_aggregated['incoming_conn']
     outgoing_connections_aggr = data_aggregated['outgoing_conn']
     classes_owned_aggr = data_aggregated['classes_owned']
     classes_connected_aggr = data_aggregated['classes_conn']
-    test_results = data_aggregated['test_results']
+    val_local = data_aggregated['val_local']
+    val_global = data_aggregated['val_global']
 
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
 
@@ -148,39 +152,67 @@ def create_plot(graph, color_map, data_aggregated):
     nx.draw_networkx(graph, pos, ax=axes[0, 2], with_labels=True, arrows=True,
                      node_color=color_map, edge_color='gray', node_size=50, font_size=6)
 
-    # Add network metrics
-
-    """
-    axes[1, 2].axis('off')
-    axes[1, 2].text(0, 0.9, "Network metrics", fontweight='bold')
-    if networkx.is_connected(graph.to_undirected()):
-        axes[1, 2].text(0, 0.7, f"Network diameter: {networkx.diameter(graph.to_undirected())}")
-        axes[1, 2].text(0, 0.5, f"Average path length: {networkx.average_shortest_path_length(graph)}")
-    else:
-        axes[1, 2].text(0, 0.7, f"Graph is unconnected")
-    """
-    for test_result in test_results:
-        if test_result is None:
-            continue
-        axes[1, 2].plot(test_result)
-    axes[1, 2].set_title('Test results')
-    axes[1, 2].set_xlabel('Test step')
+    axes[1, 2].plot(average_curve(val_local))
+    axes[1, 2].set_title('Local validation results (avg)')
+    axes[1, 2].set_xlabel('Step')
     axes[1, 2].set_ylabel('Accuracy')
 
     # Adjust spacing between subplots
     fig.tight_layout()
 
     # Show the plot
-    #plt.show()
-    plt.savefig("SimulationML.png")
+    # plt.show()
+    plt.savefig(f"./results/SimulationML_{time.strftime('%Y_%m_%d-%H_%M_%S')}.png")
+
+    print("\nNETWORK METRICS:")
+    if nx.is_connected(graph.to_undirected()):
+        print(f"Network diameter: {nx.diameter(graph.to_undirected()):.2f}")
+        print(f"Average path length: {nx.average_shortest_path_length(graph):.2f}")
+    else:
+        print(f"Graph is unconnected")
+
+    print("\nML Metrics:")
+    print(f"Global validation results: {val_global}")
+    print(f"Global validation avg.: {np.average(val_global):.2f}, Global validation stddev: {np.std(val_global):.2f}")
+
+
+def average_curve(data_arrays):
+    max_length = max(len(data) for data in data_arrays)
+
+    # Initialize the sum array
+    sum_array = np.zeros(max_length)
+    count_array = np.zeros(max_length)
+
+    # Iterate over each peer's array and add their data points to the sum array
+    for data in data_arrays:
+        sum_array[:len(data)] += data
+        count_array[:len(data)] += 1
+
+    # Divide each position in the sum array by the number of peers contributing to that position
+    averaged_curve = np.divide(sum_array, count_array, out=np.zeros_like(sum_array), where=count_array != 0)
+    return averaged_curve
+
 
 # Example usage
 if __name__ == '__main__':
-    max_classes = 10            # amount of classes for simulation
-    classes_per_node = 3        # amount of classes assigned to each node
-    num_nodes = 50             # amount of standard nodes
-    num_bootstrap_nodes = 5     # amount of bootstrap nodes
+    max_classes = 10  # amount of classes for simulation
+    classes_per_node = 3  # amount of classes assigned to each node
+    num_nodes = 50  # amount of standard nodes
+    num_bootstrap_nodes = 5  # amount of bootstrap nodes
+
+    ml_type = "avg"
+    num_epochs = 2
+    num_training_samples = 128
+    num_test_samples = 512
+
     network = NetworkSimulator()
+
+    if len(sys.argv) > 1:
+        SIMULATION_TIME = int(sys.argv[1])
+    if len(sys.argv) > 2:
+        num_nodes = int(sys.argv[2])
+    if len(sys.argv) > 3:
+        ml_type = sys.argv[3]
 
     num_connections = 10
     num_peers = 15
@@ -192,31 +224,44 @@ if __name__ == '__main__':
                          port_number,
                          max_peers=num_peers,
                          max_connections=num_connections,
-                         max_classes=max_classes)
+                         max_classes=max_classes,
+                         ml_type=ml_type,
+                         num_training_samples=num_training_samples,
+                         num_test_samples=num_test_samples)
     network.add_node(node, None)
 
     # Add further bootstrap nodes (optional, only for num_bootstrap_nodes>1)
-    for bootstrap_port_index in range(num_bootstrap_nodes-1):
-        bootstrap_port_number = port_number+1+bootstrap_port_index
+    for bootstrap_port_index in range(num_bootstrap_nodes - 1):
+        bootstrap_port_number = port_number + 1 + bootstrap_port_index
         node = Peer.PeerNode('localhost',
                              bootstrap_port_number,
                              max_peers=num_peers,
                              max_connections=num_connections,
-                             max_classes=max_classes)
-        network.add_node(node, port_number)                     # Add with connection to empty bootstrap node
+                             max_classes=max_classes,
+                             ml_type=ml_type,
+                             num_training_samples=num_training_samples,
+                             num_test_samples=num_test_samples)
+        network.add_node(node, port_number)  # Add with connection to empty bootstrap node
 
     # create nodes
     for new_port_index in range(num_nodes):
-        new_port_number = port_number+num_bootstrap_nodes+1+new_port_index
+        new_port_number = port_number + num_bootstrap_nodes + 1 + new_port_index
         node = Peer.PeerNode('localhost',
                              new_port_number,
                              max_peers=num_peers,
                              max_connections=num_connections,
-                             max_classes=max_classes)
+                             max_classes=max_classes,
+                             ml_type=ml_type,
+                             num_training_samples=num_training_samples,
+                             num_test_samples=num_test_samples)
 
-        network.add_node(node, random.randint(port_number, port_number+num_bootstrap_nodes-1))
+        network.add_node(node, random.randint(port_number, port_number + num_bootstrap_nodes - 1))
 
-    network.start_simulation()                          # Start the simulation
-    connection_info = network.get_connection_info()     # Get distribution information from established network
+    network.start_simulation()  # Start the simulation
+    connection_info = network.get_connection_info()  # Get distribution information from established network
 
-    aggregate_data(connection_info, port_number+num_bootstrap_nodes+1)      # Build bar charts and graph
+    aggregate_data(connection_info, port_number + num_bootstrap_nodes + 1)  # Build bar charts and graph
+
+    print("\nSETTINGS:")
+    print(f"Nodes: {num_nodes}, Bootstrap_nodes: {num_bootstrap_nodes + 1}, Classes per node: {max_classes}")
+    print(f"Combining Type: {ml_type}, Epochs: {num_epochs}, Train samples: {num_training_samples}, Test samples: {num_test_samples}")
