@@ -164,6 +164,13 @@ class MLModell:
         self.model = new_model
         self.train()
 
+    def select_max(self, new_statedicts):
+        own_statedict = copy.deepcopy(self.model.state_dict())
+        new_statedicts.append(own_statedict)
+
+        # TODO select maximal scored state_dict
+
+
     def get_current_weights(self):
         if self.model is not None:
             return self.model.state_dict()
