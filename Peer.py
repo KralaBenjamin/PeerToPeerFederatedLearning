@@ -10,13 +10,19 @@ logging.basicConfig(level=logging.INFO)
 
 
 class PeerNode:
-    def __init__(self, host, port, max_peers=2, max_connections=2, max_classes=10):
+    def __init__(self, host, port, max_peers=2,
+                 max_connections=2, max_classes=10,
+                 num_epochs=2, num_training_samples=128):
         self.model = None
         self.host = host
         self.port = port
         self.max_peers = max_peers  # number of maximal incoming connections that a peer accepts
 
         self.max_connections = max_connections  # number of maximal outgoing connections that a peer tries to establish
+
+        # ML settings
+        self.num_epochs = num_epochs
+        self.num_training_samples = num_training_samples
 
         # Keeps track of peers that have an incoming active connection to this peer
         # These peers can request weights
@@ -47,16 +53,8 @@ class PeerNode:
         # Queue of fixed length: always keep most current entries
         self.current_peers = deque(maxlen=10 * max_connections)
 
-    async def calculate_ml_stuff(self):
-        self.model = MLModell()
-        while True:
-            # Hier könnte deine Berechnung stehen
-            print('Doing some ml...')
-            self.model.train()
-            await asyncio.sleep(1)  # Warte für 10 Sekunden
-
     def initialize_ml_stuff(self):
-        self.model = MLModell()
+        self.model = MLModell(num_epochs=self.num_epochs, num_train_samples=self.num_training_samples)
         self.classes = self.model.classes
 
         print('Initializing some ml...')
@@ -69,6 +67,9 @@ class PeerNode:
 
         server = await asyncio.start_server(self.handle_connection, self.host, self.port)
         logging.info(f"Node listening on {self.host}:{self.port}")
+
+        # create ml query avergae loop
+        asyncio.create_task(self.query_average_loop())
 
         # start soft state checking here
         asyncio.create_task(self.check_connections_soft_state())
@@ -108,6 +109,7 @@ class PeerNode:
             await writer.wait_closed()
         else:
             await writer.drain()
+        del package, package_data
 
     async def handle_request(self, package, writer):
         if package["ACTION"] == "REQUEST WEIGHTS":
@@ -127,8 +129,8 @@ class PeerNode:
     # Method is called automatically when a connection the listening port (server) is established
     # Initial incoming messages can be: "SEEK PEERS", "SEEK CONNECTION"
     async def handle_connection(self, reader, writer):
-        peer_host, peer_port = writer.get_extra_info('peername')
-        logging.info(f"Incoming connection from {peer_host}:{peer_port}")
+        peer_info = writer.get_extra_info('peername')
+        logging.info(f"Incoming connection from {peer_info}")
 
         initial_package = await self.receive_package(reader)
 
@@ -142,14 +144,14 @@ class PeerNode:
                 package_load = list(self.current_peers.copy())
                 package_load.append((self.host, self.port, self.classes))
                 await self.send_package(writer, "PEERS SEND", package_load)
-                logging.info(f"Send peer list to {peer_host}:{peer_port}")
+                logging.info(f"Send peer list to {peer_info}")
                 writer.close()
                 await writer.wait_closed()
 
             # Still space for connection: return "CONNECTION ACCEPTED"
             elif initial_package["ACTION"] == "SEEK CONNECTION":
                 await self.send_package(writer, "CONNECTION ACCEPTED", None)
-                logging.info(f"Accepting connection from {peer_host}:{peer_port}")
+                logging.info(f"Accepting connection from {peer_info}")
 
                 # Update list self.peers
                 host, port, classes = initial_package["ADDRESS"]
@@ -168,14 +170,14 @@ class PeerNode:
         # No more connections possible: send list self.current_connections and close connection
         # Depending on incoming message, either respond with "PEERS SEND" or "CONNECTION REFUSED"
         else:
-            logging.info(f"Max peers limit reached for {peer_host}:{peer_port}")
+            logging.info(f"Max peers limit reached for {peer_info}")
             await self.send_package(writer,
                                     "PEERS SEND" if initial_package["ACTION"] == "SEEK PEERS" else "CONNECTION REFUSED",
                                     list(self.current_peers))
             writer.close()
             await writer.wait_closed()
 
-        logging.info(f"Connection with {peer_host}:{peer_port} closed")
+        logging.info(f"Connection with {peer_info} closed")
         writer.close()
         await writer.wait_closed()
 

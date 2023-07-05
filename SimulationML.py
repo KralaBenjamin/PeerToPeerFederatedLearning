@@ -23,13 +23,13 @@ class NetworkSimulator:
             if bootstrap_port is not None:                              # connect to bootstrap host
                 connect_task = asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
                 tasks.append(connect_task)
-            query_loop_task = asyncio.create_task(node.query_average_loop())
-            tasks.append(query_loop_task)
+
+            #tasks.append(query_loop_task)
 
         # Wait for all connections to establish
         try:
             # Wait for all connections to establish within the timeout
-            await asyncio.wait_for(asyncio.gather(*tasks), 180)
+            await asyncio.wait_for(asyncio.gather(*tasks), 300)
         except asyncio.TimeoutError:
             pass
 
@@ -54,8 +54,8 @@ class NetworkSimulator:
 
 def aggregate_data(connection_info, index_non_bootstrap):
     graph = nx.DiGraph()
-    incoming_connections_aggr = {key: 0 for key in range(20)}
-    outgoing_connections_aggr = {key: 0 for key in range(20)}
+    incoming_connections_aggr = {key: 0 for key in range(15)}
+    outgoing_connections_aggr = {key: 0 for key in range(15)}
     classes_owned_aggr = {key: 0 for key in range(10)}
     classes_connected_aggr = {key: 0 for key in range(10)}
     test_results_aggr = []
@@ -77,8 +77,10 @@ def aggregate_data(connection_info, index_non_bootstrap):
         if port >= index_non_bootstrap:
             # Aggregate in- and outgoing connections info
             if peers is not None and connections is not None and classes_connected is not None and classes_owned is not None:
-                incoming_connections_aggr[len(peers)] += 1
-                outgoing_connections_aggr[len(connections)] += 1
+                if len(peers) < len(incoming_connections_aggr):
+                    incoming_connections_aggr[len(peers)] += 1
+                if len(connections) < len(outgoing_connections_aggr):
+                    outgoing_connections_aggr[len(connections)] += 1
 
                 # Aggregate owned classes info
                 for class_owned in classes_owned:
@@ -176,7 +178,7 @@ def create_plot(graph, color_map, data_aggregated):
 if __name__ == '__main__':
     max_classes = 10            # amount of classes for simulation
     classes_per_node = 3        # amount of classes assigned to each node
-    num_nodes = 100             # amount of standard nodes
+    num_nodes = 50             # amount of standard nodes
     num_bootstrap_nodes = 5     # amount of bootstrap nodes
     network = NetworkSimulator()
 
