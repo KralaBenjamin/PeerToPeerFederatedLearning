@@ -3,6 +3,7 @@ import asyncio
 import random
 import time
 import numpy as np
+import pandas as pd
 
 import Peer
 import networkx as nx
@@ -102,19 +103,24 @@ def aggregate_data(connection_info, index_non_bootstrap):
         for (conn_host, conn_port) in connections:
             graph.add_edge(port, conn_port)
 
-        data_aggregated = {
-            'incoming_conn': incoming_connections_aggr,
-            'outgoing_conn': outgoing_connections_aggr,
-            'classes_owned': classes_owned_aggr,
-            'classes_conn': classes_connected_aggr,
-            'val_local': val_local_aggr,
-            'val_global': val_global_aggr
-        }
+    data_aggregated = {
+        'incoming_conn': incoming_connections_aggr,
+        'outgoing_conn': outgoing_connections_aggr,
+        'classes_owned': classes_owned_aggr,
+        'classes_conn': classes_connected_aggr,
+        'val_local': val_local_aggr,
+        'val_global': val_global_aggr
+    }
 
-    return create_plot(graph, color_map, data_aggregated)
+    current_timestamp = time.strftime('%Y_%m_%d-%H_%M_%S')
+
+    nx.write_adjlist(graph, f"./results/graph_{current_timestamp}.adjlist")
+
+    create_plot(graph, color_map, data_aggregated, current_timestamp)
+    save_data(graph, data_aggregated, current_timestamp)
 
 
-def create_plot(graph, color_map, data_aggregated):
+def create_plot(graph, color_map, data_aggregated, timestamp):
     # Retrieve data for charts from dict
     incoming_connections_aggr = data_aggregated['incoming_conn']
     outgoing_connections_aggr = data_aggregated['outgoing_conn']
@@ -152,7 +158,13 @@ def create_plot(graph, color_map, data_aggregated):
     nx.draw_networkx(graph, pos, ax=axes[0, 2], with_labels=True, arrows=True,
                      node_color=color_map, edge_color='gray', node_size=50, font_size=6)
 
-    axes[1, 2].plot(average_curve(val_local))
+    # Plot all local lines
+    for data in val_local:
+        axes[1, 2].plot(data, color='b', alpha=0.5, linewidth=0.5)
+
+    # Plot the averaged line
+    axes[1, 2].plot(average_curve(val_local), color='r', linewidth=2)
+
     axes[1, 2].set_title('Local validation results (avg)')
     axes[1, 2].set_xlabel('Step')
     axes[1, 2].set_ylabel('Accuracy')
@@ -160,9 +172,46 @@ def create_plot(graph, color_map, data_aggregated):
     # Adjust spacing between subplots
     fig.tight_layout()
 
-    # Show the plot
-    # plt.show()
-    plt.savefig(f"./results/SimulationML_{time.strftime('%Y_%m_%d-%H_%M_%S')}.png")
+    plt.savefig(f"./results/SimulationML_{timestamp}.png")
+
+
+def save_data(graph, data_aggregated, timestamp):
+
+    val_local = data_aggregated['val_local']
+    val_global = data_aggregated['val_global']
+
+    dataframe_dict = {'num_nodes': [num_nodes], 'num_bootstrap_nodes': [num_bootstrap_nodes + 1],
+                      'classes_per_node': [classes_per_node], 'num_samples': [num_samples],
+                      'ML_combining_type': [ml_type], 'num_epochs': [num_epochs]}
+
+    if nx.is_connected(graph.to_undirected()):
+        dataframe_dict['network_diameter'] = [nx.diameter(graph.to_undirected())]
+        dataframe_dict['avg_path_length'] = [nx.average_shortest_path_length(graph.to_undirected())]
+    else:
+        dataframe_dict['Unconnected'] = []
+
+    results_dict = {}
+    results_dict.fromkeys(list(i for i in range(num_nodes + num_bootstrap_nodes + 1)))
+
+    # set avg values
+    val_local_avg = average_curve(val_local)
+    results_avg = np.insert(val_local_avg, 0, np.average(val_global))
+    results_dict['avg'] = results_avg
+
+    for i, local_acc in enumerate(val_local):
+        local_acc_padded = local_acc + [local_acc[-1]]*(len(val_local_avg)-len(local_acc))
+        results_dict[i] = [val_global[i]]+local_acc_padded
+
+    df_settings = pd.DataFrame.from_dict(dataframe_dict)
+    df_results = pd.DataFrame.from_dict(results_dict)
+    df_settings.to_csv(f"./results/dat_settings_{timestamp}.csv")
+    df_results.to_csv(f"./results/data_results_{timestamp}.csv")
+
+    # Print metrics to console
+    print("\nSETTINGS:")
+    print(f"Nodes: {num_nodes}, Bootstrap_nodes: {num_bootstrap_nodes + 1}, Classes per node: {max_classes}")
+    print(
+        f"Combining Type: {ml_type}, Epochs: {num_epochs}, Train samples: {num_training_samples}, Test samples: {num_test_samples}")
 
     print("\nNETWORK METRICS:")
     if nx.is_connected(graph.to_undirected()):
@@ -202,8 +251,9 @@ if __name__ == '__main__':
 
     ml_type = "avg"
     num_epochs = 2
-    num_training_samples = 128
-    num_test_samples = 512
+    num_samples = 512
+    num_training_samples = num_samples
+    num_test_samples = num_samples
 
     network = NetworkSimulator()
 
@@ -261,7 +311,3 @@ if __name__ == '__main__':
     connection_info = network.get_connection_info()  # Get distribution information from established network
 
     aggregate_data(connection_info, port_number + num_bootstrap_nodes + 1)  # Build bar charts and graph
-
-    print("\nSETTINGS:")
-    print(f"Nodes: {num_nodes}, Bootstrap_nodes: {num_bootstrap_nodes + 1}, Classes per node: {max_classes}")
-    print(f"Combining Type: {ml_type}, Epochs: {num_epochs}, Train samples: {num_training_samples}, Test samples: {num_test_samples}")
