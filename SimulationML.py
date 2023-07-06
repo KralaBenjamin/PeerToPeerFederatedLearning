@@ -257,17 +257,21 @@ if __name__ == '__main__':
 
     network = NetworkSimulator()
 
+    num_connections = 10
+    port_number = 8000
+
     if len(sys.argv) > 1:
         SIMULATION_TIME = int(sys.argv[1])
     if len(sys.argv) > 2:
         num_nodes = int(sys.argv[2])
     if len(sys.argv) > 3:
-        ml_type = sys.argv[3]
+        num_connections = int(sys.argv[3])
+    if len(sys.argv) > 4:
+        port_number = int(sys.argv[4])
+    if len(sys.argv) > 5:
+        ml_type = sys.argv[5]
 
-    num_connections = 10
     num_peers = 15
-
-    port_number = 8000
 
     # Add initial (empty) bootstrap node
     node = Peer.PeerNode('localhost',
