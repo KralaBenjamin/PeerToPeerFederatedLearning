@@ -188,14 +188,17 @@ def save_data(graph, data_aggregated, timestamp):
         dataframe_dict['network_diameter'] = [nx.diameter(graph.to_undirected())]
         dataframe_dict['avg_path_length'] = [nx.average_shortest_path_length(graph.to_undirected())]
     else:
-        dataframe_dict['Unconnected'] = []
+        dataframe_dict['Unconnected'] = ['yes']
 
     results_dict = {}
+
     results_dict.fromkeys(list(i for i in range(num_nodes + num_bootstrap_nodes + 1)))
 
     # set avg values
     val_local_avg = average_curve(val_local)
     results_avg = np.insert(val_local_avg, 0, np.average(val_global))
+
+    results_dict['validation'] = ["global"] + [f"model_{model_index}" for model_index in range(len(val_local_avg))]
     results_dict['avg'] = results_avg
 
     for i, local_acc in enumerate(val_local):
@@ -204,7 +207,7 @@ def save_data(graph, data_aggregated, timestamp):
 
     df_settings = pd.DataFrame.from_dict(dataframe_dict)
     df_results = pd.DataFrame.from_dict(results_dict)
-    df_settings.to_csv(f"./results/dat_settings_{timestamp}.csv")
+    df_settings.to_csv(f"./results/data_settings_{timestamp}.csv")
     df_results.to_csv(f"./results/data_results_{timestamp}.csv")
 
     # Print metrics to console
