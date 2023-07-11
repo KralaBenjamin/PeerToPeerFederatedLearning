@@ -1,0 +1,2 @@
+,num_nodes,num_bootstrap_nodes,classes_per_node,num_samples,ML_combining_type,num_epochs,Unconnected
+0,100,6,3,512,avg,2,yes
