@@ -99,9 +99,8 @@ def aggregate_data(connection_info, index_non_bootstrap):
         else:
             color_map.append('red')
 
-        # Build graph (largest component)
-        if len(connections) > 0:
-            graph.add_node(port)
+        # Build graph
+        graph.add_node(port)
         for (conn_host, conn_port) in connections:
             graph.add_edge(port, conn_port)
 
@@ -161,17 +160,22 @@ def create_plot(graph, color_map, data_aggregated, timestamp):
                      node_color=color_map, edge_color='gray', node_size=50, font_size=6)
 
     # Plot all local lines
-    for data in val_local:
-        axes[1, 2].plot(data, color='b', alpha=0.5, linewidth=0.5)
+    #for data in val_local:
+    #    axes[1, 2].plot(data, color='b', alpha=0.5, linewidth=0.5)
 
     # Plot the averaged line
-    axes[1, 2].plot(average_curve(val_local), color='r', linewidth=2, label="avg. local validity")
+    average_curve_local, std_array = average_curve(val_local)
+    x_values = range(len(average_curve_local))
+    axes[1, 2].plot(x_values, average_curve_local, color='r', linewidth=2, label="avg. local validity")
+    axes[1, 2].fill_between(x_values, average_curve_local - std_array, average_curve_local + std_array, alpha=0.3, color='r')
 
     axes[1, 2].set_title('Local validation results (avg)')
     axes[1, 2].set_xlabel('Step')
     axes[1, 2].set_ylabel('Accuracy')
 
-    axes[1, 2].axhline(y=np.average(val_global), color='g', linestyle='dashed', label="global validity")
+    plt.errorbar(x_values[-1], np.average(val_global), yerr=np.std(val_global), fmt='o', color='g', label='Global validity')
+
+    #axes[1, 2].axhline(y=np.average(val_global), color='g', linestyle='dashed', label="global validity")
     axes[1, 2].legend(bbox_to_anchor=(1.0, 1), loc='upper center')
 
     # Adjust spacing between subplots
@@ -200,7 +204,7 @@ def save_data(graph, data_aggregated, timestamp):
     results_dict.fromkeys(list(i for i in range(num_nodes + num_bootstrap_nodes + 1)))
 
     # set avg values
-    val_local_avg = average_curve(val_local)
+    val_local_avg, _ = average_curve(val_local)
     results_avg = np.insert(val_local_avg, 0, np.average(val_global))
 
     results_dict['validation'] = ["global"] + [f"model_{model_index}" for model_index in range(len(val_local_avg))]
@@ -225,7 +229,7 @@ def save_data(graph, data_aggregated, timestamp):
     print("\nNETWORK METRICS:")
     if nx.is_connected(graph.to_undirected()):
         print(f"Network diameter: {nx.diameter(graph.to_undirected()):.2f}")
-        print(f"Average path length: {nx.average_shortest_path_length(graph):.2f}")
+        print(f"Average path length: {nx.average_shortest_path_length(graph.to_undirected()):.2f}")
     else:
         print(f"Graph is unconnected")
 
@@ -240,21 +244,33 @@ def average_curve(data_arrays):
     # Initialize the sum array
     sum_array = np.zeros(max_length)
     count_array = np.zeros(max_length)
+    collected_values = [[] for i in range(max_length)]
 
     # Iterate over each peer's array and add their data points to the sum array
-    for data in data_arrays:
-        sum_array[:len(data)] += data
-        count_array[:len(data)] += 1
+    for data_array in data_arrays:
+        sum_array[:len(data_array)] += data_array
+        count_array[:len(data_array)] += 1
+
+        for i, data in enumerate(data_array):
+            collected_values[i].append(data)
 
     # Divide each position in the sum array by the number of peers contributing to that position
     averaged_curve = np.divide(sum_array, count_array, out=np.zeros_like(sum_array), where=count_array != 0)
-    return averaged_curve
+
+    print(collected_values)
+    std_array = []
+
+    for val in collected_values:
+        std_val = np.std(val)
+        std_array.append(std_val)
+
+    return averaged_curve, std_array
 
 
 # Example usage
 if __name__ == '__main__':
     max_classes = 10  # amount of classes for simulation
-    classes_per_node = 5  # amount of classes assigned to each node
+    classes_per_node = 3  # amount of classes assigned to each node
     num_nodes = 50  # amount of standard nodes
     num_bootstrap_nodes = 5  # amount of bootstrap nodes
 
@@ -267,7 +283,7 @@ if __name__ == '__main__':
     network = NetworkSimulator()
 
     num_connections = 10
-    port_number = 8000
+    port_number = 10000
 
     if len(sys.argv) > 1:
         SIMULATION_TIME = int(sys.argv[1])
@@ -280,7 +296,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 5:
         ml_type = sys.argv[5]
 
-    num_peers = 15
+    num_peers = 50
 
     # Add initial (empty) bootstrap node
     node = Peer.PeerNode('localhost',

@@ -225,7 +225,9 @@ class MLModell:
 
     def select_max(self, state_dicts):
         own_state_dict = copy.deepcopy(self.model.state_dict())
-        state_dicts.append(own_state_dict)
+
+        if len(state_dicts) == 0:
+            state_dicts.append(own_state_dict)
 
         comp_list = [None] * len(state_dicts)
 
