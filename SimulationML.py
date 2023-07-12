@@ -24,6 +24,7 @@ class NetworkSimulator:
             await asyncio.sleep(0.5)  # wait for server to start listening
             tasks.append(server_task)
             if bootstrap_port is not None:  # connect to bootstrap host
+                node.bootstrap_port = bootstrap_port
                 connect_task = asyncio.create_task(node.connect_to_peer('localhost', bootstrap_port, True))
                 tasks.append(connect_task)
 
@@ -98,8 +99,9 @@ def aggregate_data(connection_info, index_non_bootstrap):
         else:
             color_map.append('red')
 
-        # Build graph
-        graph.add_node(port)
+        # Build graph (largest component)
+        if len(connections) > 0:
+            graph.add_node(port)
         for (conn_host, conn_port) in connections:
             graph.add_edge(port, conn_port)
 
@@ -163,11 +165,14 @@ def create_plot(graph, color_map, data_aggregated, timestamp):
         axes[1, 2].plot(data, color='b', alpha=0.5, linewidth=0.5)
 
     # Plot the averaged line
-    axes[1, 2].plot(average_curve(val_local), color='r', linewidth=2)
+    axes[1, 2].plot(average_curve(val_local), color='r', linewidth=2, label="avg. local validity")
 
     axes[1, 2].set_title('Local validation results (avg)')
     axes[1, 2].set_xlabel('Step')
     axes[1, 2].set_ylabel('Accuracy')
+
+    axes[1, 2].axhline(y=np.average(val_global), color='g', linestyle='dashed', label="global validity")
+    axes[1, 2].legend(bbox_to_anchor=(1.0, 1), loc='upper center')
 
     # Adjust spacing between subplots
     fig.tight_layout()
@@ -176,11 +181,11 @@ def create_plot(graph, color_map, data_aggregated, timestamp):
 
 
 def save_data(graph, data_aggregated, timestamp):
-
     val_local = data_aggregated['val_local']
     val_global = data_aggregated['val_global']
 
     dataframe_dict = {'num_nodes': [num_nodes], 'num_bootstrap_nodes': [num_bootstrap_nodes + 1],
+                      'connections': [num_connections],
                       'classes_per_node': [classes_per_node], 'num_samples': [num_samples],
                       'ML_combining_type': [ml_type], 'num_epochs': [num_epochs]}
 
@@ -202,8 +207,8 @@ def save_data(graph, data_aggregated, timestamp):
     results_dict['avg'] = results_avg
 
     for i, local_acc in enumerate(val_local):
-        local_acc_padded = local_acc + [local_acc[-1]]*(len(val_local_avg)-len(local_acc))
-        results_dict[i] = [val_global[i]]+local_acc_padded
+        local_acc_padded = local_acc + [local_acc[-1]] * (len(val_local_avg) - len(local_acc))
+        results_dict[i] = [val_global[i]] + local_acc_padded
 
     df_settings = pd.DataFrame.from_dict(dataframe_dict)
     df_results = pd.DataFrame.from_dict(results_dict)
@@ -212,7 +217,8 @@ def save_data(graph, data_aggregated, timestamp):
 
     # Print metrics to console
     print("\nSETTINGS:")
-    print(f"Nodes: {num_nodes}, Bootstrap_nodes: {num_bootstrap_nodes + 1}, Classes per node: {max_classes}")
+    print(
+        f"Nodes: {num_nodes}, Bootstrap_nodes: {num_bootstrap_nodes + 1}, Classes per node: {classes_per_node}, Connections: {num_connections}")
     print(
         f"Combining Type: {ml_type}, Epochs: {num_epochs}, Train samples: {num_training_samples}, Test samples: {num_test_samples}")
 
@@ -248,7 +254,7 @@ def average_curve(data_arrays):
 # Example usage
 if __name__ == '__main__':
     max_classes = 10  # amount of classes for simulation
-    classes_per_node = 3  # amount of classes assigned to each node
+    classes_per_node = 5  # amount of classes assigned to each node
     num_nodes = 50  # amount of standard nodes
     num_bootstrap_nodes = 5  # amount of bootstrap nodes
 
@@ -281,6 +287,7 @@ if __name__ == '__main__':
                          port_number,
                          max_peers=num_peers,
                          max_connections=num_connections,
+                         num_classes=classes_per_node,
                          max_classes=max_classes,
                          ml_type=ml_type,
                          num_training_samples=num_training_samples,
@@ -294,6 +301,7 @@ if __name__ == '__main__':
                              bootstrap_port_number,
                              max_peers=num_peers,
                              max_connections=num_connections,
+                             num_classes=classes_per_node,
                              max_classes=max_classes,
                              ml_type=ml_type,
                              num_training_samples=num_training_samples,
@@ -307,6 +315,7 @@ if __name__ == '__main__':
                              new_port_number,
                              max_peers=num_peers,
                              max_connections=num_connections,
+                             num_classes=classes_per_node,
                              max_classes=max_classes,
                              ml_type=ml_type,
                              num_training_samples=num_training_samples,

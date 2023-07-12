@@ -11,10 +11,11 @@ logging.basicConfig(level=logging.INFO)
 
 class PeerNode:
     def __init__(self, host, port, max_peers=2,
-                 max_connections=2, max_classes=10,
+                 max_connections=2, num_classes=3, max_classes=10,
                  num_epochs=2, ml_type='avg',
                  num_training_samples=128, num_test_samples=512):
         self.model = None
+        self.bootstrap_port = None
         self.host = host
         self.port = port
         self.max_peers = max_peers  # number of maximal incoming connections that a peer accepts
@@ -26,6 +27,7 @@ class PeerNode:
         self.num_training_samples = num_training_samples
         self.num_test_samples = num_test_samples
         self.ml_type = ml_type
+        self.num_classes = num_classes
 
         # Keeps track of peers that have an incoming active connection to this peer
         # These peers can request weights
@@ -59,7 +61,8 @@ class PeerNode:
     def initialize_ml_stuff(self):
         self.model = MLModell(num_epochs=self.num_epochs,
                               num_train_samples=self.num_training_samples,
-                              num_test_samples=self.num_test_samples)
+                              num_test_samples=self.num_test_samples,
+                              num_classes=self.num_classes)
         self.classes = self.model.classes
 
         print('Initializing some ml...')
@@ -189,6 +192,8 @@ class PeerNode:
     # Method for trying to establish a connection to a peer
     # Only for initially entering the network (bootstrapping), init should be set True
     async def connect_to_peer(self, peer_host, peer_port, init=False):
+        if init and len(self.current_peers) == 0:
+            self.current_peers.append((peer_host, peer_port, []))
         try:
             reader, writer = await asyncio.open_connection(peer_host, peer_port)
             logging.info(f"Connected to peer {peer_host}:{peer_port}")
@@ -265,6 +270,7 @@ class PeerNode:
             await asyncio.sleep(10)
             logging.info(
                 f"Soft State checked. {len(self.connections)} out of {self.max_connections} connections present.")
+
             if len(self.connections) < self.max_connections/2:
                 # select randomly new peer and initiate getting new connections
                 if len(self.current_peers) > 0:
@@ -281,7 +287,7 @@ class PeerNode:
 
     async def query_combine_loop(self):
         while True:
-            await asyncio.sleep(random.randint(1, 2)/10.0)
+            await asyncio.sleep(0.1)
             if len(self.connections) > 0:
                 for connected_node, (_, writer) in self.connections.items():
                     await self.send_package(writer, "REQUEST WEIGHTS")
@@ -292,7 +298,7 @@ class PeerNode:
                         collected_state_dicts.append(state_dict)
                         self.received_state_dicts[connected_node] = None
 
-                if len(collected_state_dicts)>0:
+                if len(collected_state_dicts) > 0:
                     logging.info(f"Averaging over {len(collected_state_dicts)} state dicts.")
                     if self.ml_type == "avg":
                         self.model.average(collected_state_dicts)
