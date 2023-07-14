@@ -283,7 +283,7 @@ if __name__ == '__main__':
     network = NetworkSimulator()
 
     num_connections = 10
-    port_number = 10000
+    port_number = 11333
 
     if len(sys.argv) > 1:
         SIMULATION_TIME = int(sys.argv[1])

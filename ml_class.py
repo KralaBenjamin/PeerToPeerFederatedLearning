@@ -84,7 +84,7 @@ class MLModell:
 
     def get_random_numbers(self, num_classes):
 
-        p = [1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1]
+        p = [1, 1, 2, 1, 1, 1, 1, 1, 1, 1]
         p = [i / 11 for i in p] 
         result = [np.random.choice(range(10), p=p) for _ in range(num_classes)]
 
