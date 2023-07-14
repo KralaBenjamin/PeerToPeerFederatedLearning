@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 import copy
+import numpy as np
 
 
 class MLModell:
@@ -20,7 +21,7 @@ class MLModell:
                  num_classes=3, num_train_samples=128, num_test_samples=512, num_val_samples=1024):
 
         if train_dataloader is None or test_dataloader is None:
-            random_classes = random.sample(range(10), num_classes)  # select random classes
+            random_classes = self.get_random_numbers(num_classes)  # select random classes
 
             # Load full train and test datasets
             train_dataset_full = torchvision.datasets.FashionMNIST(root='./data',
@@ -80,6 +81,14 @@ class MLModell:
         self.max_n = max_n
 
         self.val_results = []
+
+    def get_random_numbers(self, num_classes):
+
+        p = [1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1]
+        p = [i / 11 for i in p] 
+        result = [np.random.choice(range(10), p=p) for _ in range(num_classes)]
+
+        return result
 
     def create_dataset(self, full_dataset, num_samples, covered_indices, classes=None):
         sample_index = 0
