@@ -1,0 +1,2 @@
+,num_nodes,num_bootstrap_nodes,connections,classes_per_node,num_samples,ML_combining_type,num_epochs,network_diameter,avg_path_length
+0,50,6,5,3,1024,max,2,3,1.997979797979798
