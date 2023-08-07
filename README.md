@@ -1,26 +1,80 @@
-# PeerToPeerFederatedLearning
-Start simulation by running:
-`python SimulationML.py [opt.: timeout seconds] [opt.: num of standard nodes] [opt.: num of connections] [opt.: start port number] [opt.: type, either avg or max]`.
-Example:
-`python SImulationML.py 600 50 10 8000 avg`
-## Parameters
-Standard parameters are:
+# Neural Peer
 
-Timeout: 300 seconds\
-Bootstrap nodes: 6\
-Nodes: 50
+## What is Neural Peer?
 
-Number of max connections (outgoing): 10\
-Number of max connections (incoming): 15 (always incoming+5)
+## Content of the Repository 
 
-Port range: 8000-8055 on localhost
+## Technologies
 
-ML Type: avg\
-Epochs: 2\
-Train samples per Peer: 512\
-Test samples per Peer: 512\
-Classes per Peer: 3
+## Dependencies
 
-Results are saved in files with timestamp under ./results
+## Launch
+It is possible build a network by running individual Peers as processes.
+In order to gather results from a network in total, there is also a script
+to start a pre-determined number of Peers and collects their data during the
+time of the experiment.
+### Launching an individual Peer instance
+In order to instantiate a Peer, the port on which he can listen (on localhost)
+must be specified. In order to integrate in a netowrk, an additional port of an
+already running instance can be given, which servers as a bootstrap mechanism.
+A Peer instance is started with:\
+`python Peer.py [listening port] [opt.: bootstrap port]`
 
-All parameters can be changed in the main of SimulationML.py
+After a node is started and integrated in a network, it exchanges model weights
+with its neighbours and trains a local model automatically. There is no
+termination criterion, so Peers share data and train their models until their
+process is terminated by the user.
+### Launching an experiment with multiple Peers
+To evaluate different approaches and parameters, there is also a script for
+starting an experiment with several Peers. The nodes are started one after the
+other with increasing port numbers. In the beginning of the experiment, a number
+of bootstrap nodes are created to serve as entry points in the network.
+After a timeout, all nodes are terminated and their information is collected
+and saved.\
+Following parameters can be set:
+* Timeout to stop experiment (in seconds)
+* Number of standard nodes created in the network (excluding bootstrap nodes)
+* Number of connections each Peer tries to establish
+* Start port (port number, default: 8000), following ports are assigned increasingly
+* Type (avg for average of model weights, max for best-performing model)
+
+An experiment is started with:\
+`python SimulationML.py [timeout] [num of standard nodes] [num of connections] [start port number] [type]`
+
+After each local training step, the validation is scored with a small local
+validation set. Additionally, the final models are evaluated with a large
+validation dataset.\
+After the timeout has elapsed, the parameters, validation scores and network
+properties are saved in csv-filed in */results* with the current
+timecode.
+
+## Experiments
+We ran multiple experiments to compare the different approaches and test the
+influence of the parameters. The result data is saved in subdirectories of
+*/results*. When having only data from a number of classes locally available,
+we expect the validation score of a model to be at least
+*locally available classes / overall classes*. If this value is exceeded, we
+assume that the additional information is from exchanging model weights
+with neighbours in the network. In most runs, we could observe an increase in
+ validation values of around **+0.1**. Two examples can be seen below.
+
+ ![SimulationML_2023_07_15-16_58_12](https://github.com/KralaBenjamin/PeerToPeerFederatedLearning/assets/23062484/480a12fa-f986-4f19-85d3-db98307bd4c1)
+
+ ![SimulationML_2023_07_15-16_57_44](https://github.com/KralaBenjamin/PeerToPeerFederatedLearning/assets/23062484/0f646019-f5d1-4b36-946a-d382181dd0ff)
+
+Results for avg (top) and max (bottom) with 128 samples, 5 connections and 5 classes.
+ 
+ ### Type: avg vs. max
+ Regarding validation values, there was no clear trend visible between the
+ avg and max approaches. However, when both run with the same timeout, avg
+ manages to perform more training steps, because averaging the state weights is
+ a faster operation than evaluating each received model to select the best.
+ ### Number of samples and epochs
+ As default values, each Peer was instantiated with 128 samples which are
+ trained for two epochs in the training step. We tried to increase and decrease
+ the parameters, but without any noticaeble difference in the validation
+ results.
+ ### Number of classes
+ As expected, the validation for a higher number of local classes is
+ proportionally higher. However, the increase of circa +0.1 did not change when
+ increasing the amount of classes for each Peer.
