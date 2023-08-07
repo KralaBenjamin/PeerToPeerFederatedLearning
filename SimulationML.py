@@ -166,20 +166,21 @@ def create_plot(graph, color_map, data_aggregated, timestamp):
     # Plot the averaged line
     average_curve_local, std_array = average_curve(val_local)
     x_values = range(len(average_curve_local))
-    axes[1, 2].plot(x_values, average_curve_local, color='r', linewidth=2, label="avg. local validity")
+    axes[1, 2].plot(x_values, average_curve_local, color='r', linewidth=2, label="avg. local validation")
     axes[1, 2].fill_between(x_values, average_curve_local - std_array, average_curve_local + std_array, alpha=0.3, color='r')
 
     axes[1, 2].set_title('Local validation results (avg)')
     axes[1, 2].set_xlabel('Step')
     axes[1, 2].set_ylabel('Accuracy')
 
-    plt.errorbar(x_values[-1], np.average(val_global), yerr=np.std(val_global), fmt='o', color='g', label='Global validity')
+    plt.errorbar(x_values[-1], np.average(val_global), yerr=np.std(val_global), fmt='o', color='g', label='global validation')
 
     #axes[1, 2].axhline(y=np.average(val_global), color='g', linestyle='dashed', label="global validity")
-    axes[1, 2].legend(bbox_to_anchor=(1.0, 1), loc='upper center')
+    axes[1, 2].legend(loc='upper left')
 
     # Adjust spacing between subplots
     fig.tight_layout()
+    plt.show()
 
     plt.savefig(f"./results/SimulationML_{timestamp}.png")
 
@@ -257,7 +258,6 @@ def average_curve(data_arrays):
     # Divide each position in the sum array by the number of peers contributing to that position
     averaged_curve = np.divide(sum_array, count_array, out=np.zeros_like(sum_array), where=count_array != 0)
 
-    print(collected_values)
     std_array = []
 
     for val in collected_values:
@@ -276,7 +276,7 @@ if __name__ == '__main__':
 
     ml_type = "avg"
     num_epochs = 2
-    num_samples = 512
+    num_samples = 64
     num_training_samples = num_samples
     num_test_samples = num_samples
 

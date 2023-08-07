@@ -86,6 +86,7 @@ class PeerNode:
             await server.serve_forever()
 
     async def receive_package(self, reader):
+
         package_length_data = await reader.readexactly(4)
         package_length = int.from_bytes(package_length_data, "big")
 
@@ -100,6 +101,7 @@ class PeerNode:
                      f"Load: {load if action != 'WEIGHTS SEND' else '<STATE_DICT>'}")
 
         return package
+
 
     async def send_package(self, writer, action="", load=None):
         package = {
