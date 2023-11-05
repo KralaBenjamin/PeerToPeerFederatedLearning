@@ -24,8 +24,22 @@ It was important to note that this does not happen in the beginning as a peert t
 ## Content of the Repository 
 
 ## Technologies
+- Python
+- Peer2Peer
+- Pytorch, Machine Learning
+- Numpy
+- AsyncIO
+- matplotlib
+- NetworkX
+- 
 
 ## Dependencies
+python=3.11.3
+pytorch=2.0.1
+matplotlib=3.7.1
+networkx=3.1
+numpy=1.24.3
+
 
 ## Launch
 It is possible build a network by running individual Peers as processes.
