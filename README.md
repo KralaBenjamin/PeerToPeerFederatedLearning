@@ -1,6 +1,25 @@
 # Neural Peer
 
 ## What is Neural Peer?
+Neural Peer is an concept created during the "Peer to Peer" lecture at the summer term of 2023 based on the paper [BrainTorrent | https://arxiv.org/abs/1905.06731], under the guidance of Professor Tschorsch. The idea was developed by brandjak and KralaBenjamin. The primary goal of Neural Peer is to combine the principles of Peer-to-Peer (P2P) networks with the capabilities of Neural Networks to enable decentralized training and collaboration among peers.
+
+In the context of our experiments on Neural Peer, a peer represents an entity with access to a particular subset of knowledge or data. However, due to various constraints such as data protection regulations, these peers are unable to share their data directly. Instead, they can share the weights of their models, which represent the distilled knowledge from their data.
+
+
+The experiments conducted with Neural Peer revolve around a basic idea of training neural networks in a decentralized manner. The dataset used for this purpose is the popular FashionMNIST, which comprises images of clothing items belonging to different classes. It is also harder to train the classic MNIST. In order to simulate the limited knowledge scenario of each peer, the dataset is divided in such a way that every peer only has access to a fraction of the classes, usually three random classes.
+
+The training process involves every peer independently training its model for one epoch using its local data. All peers use the same NN architecture. You can find the Lenet Architecture [here | https://github.com/KralaBenjamin/PeerToPeerFederatedLearning/blob/76e0528714925715178b066197dfec10a6370e85/ml_class.py#L251C7-L251C12].
+
+
+Once the training is complete, the peers can send their newly trained models to their neighboring peers.
+This happens when a peer ask another peer for data (= model as we are privacy friendly).
+After receiving the models from neighbors, each peer either averages the models or selects the best model based on its own test data. This process allows peers to benefit from the knowledge of others without directly accessing their data.
+
+
+
+In general the selection of neighbor peers plays a crucial role in the effectiveness of the Neural Peer concept. Every peer aims to maximize its class distribution by carefully choosing neighbors that possess complementary knowledge. By collaborating with peers that have access to different classes, each peer can enhance its model's ability to recognize a wider range of classes, ultimately leading to better performance. Also very important while a good P2P network tries to avoid many connections (reduciong network complexity), in machine learning the peer needs as many peers as possible to gather as much information as possible. This was also one question in our experiments.
+It was important to note that this does not happen in the beginning as a peert try to find as many peers as possible.
+
 
 ## Content of the Repository 
 
